@@ -1,0 +1,10 @@
+{
+	"id": "3d-graph",
+	"name": "3D Graph Plugin",
+	"version": "1.0.0",
+	"minAppVersion": "1.7.0",
+	"description": "A 3D Graph Plugin for Obsidian.",
+	"author": "Aryan Gupta",
+	"authorUrl": "https://aryan-gupta.is-a.dev",
+	"isDesktopOnly": true
+}
