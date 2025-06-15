@@ -1,9 +1,9 @@
 {
 	"id": "new-3d-graph",
-	"name": "3D Graph Plugin",
+	"name": "New 3D Graph",
 	"version": "2.0.0",
-	"minAppVersion": "1.7.0",
-	"description": "A 3D Graph Plugin for Obsidian.",
+	"minAppVersion": "1.5.0",
+	"description": "Visualize your Vault in 3D with a powerful, highly customizable, and filterable graph.",
 	"author": "Aryan Gupta",
 	"authorUrl": "https://aryan-gupta.is-a.dev",
 	"isDesktopOnly": true
