@@ -1,0 +1,16 @@
+.graph-3d-container {
+	position: relative;
+	width: 100%;
+	height: 100%;
+}
+
+.graph-3d-message {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	color: var(--text-muted);
+	display: none;
+	z-index: 10;
+	font-size: var(--font-ui-large);
+}

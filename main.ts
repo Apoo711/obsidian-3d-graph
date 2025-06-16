@@ -1,10 +1,10 @@
-// main.ts
 import { App, ItemView, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile } from 'obsidian';
 import ForceGraph3D from '3d-force-graph';
 import * as THREE from 'three';
 
-
 export const VIEW_TYPE_3D_GRAPH = "3d-graph-view";
+
+// --- Interfaces and Enums ---
 
 interface GraphGroup {
 	query: string;
@@ -62,15 +62,20 @@ const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 };
 
 enum NodeType { File, Tag, Attachment }
+
 interface GraphNode {
 	id: string;
 	name: string;
 	type: NodeType;
 	tags?: string[];
+	// --- FIX: Add optional __threeObj to avoid 'any' casting ---
+	__threeObj?: THREE.Object3D;
 }
 
+// --- Main View Class ---
+
 class Graph3DView extends ItemView {
-	private graph: any;
+	private graph: any; // The library's type is complex, so 'any' is acceptable here
 	private plugin: Graph3DPlugin;
 	private settings: Graph3DPluginSettings;
 
@@ -95,7 +100,8 @@ class Graph3DView extends ItemView {
 	async onOpen() {
 		const container = this.containerEl.children[1];
 		container.empty();
-		this.graphContainer = container.createEl('div', { attr: { style: 'position: relative; width: 100%; height: 100%;' } });
+		// --- FIX: Use CSS class instead of inline styles ---
+		this.graphContainer = container.createEl('div', { cls: 'graph-3d-container' });
 		this.initializeGraph();
 	}
 
@@ -103,11 +109,8 @@ class Graph3DView extends ItemView {
 		this.app.workspace.onLayoutReady(() => {
 			this.graphContainer.empty();
 
-			this.messageEl = this.graphContainer.createEl('div', {
-				attr: {
-					style: 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: grey; display: none; z-index: 10;'
-				}
-			});
+			// --- FIX: Use CSS class instead of inline styles ---
+			this.messageEl = this.graphContainer.createEl('div', { cls: 'graph-3d-message' });
 
 			const Graph = (ForceGraph3D as any).default || ForceGraph3D;
 			this.graph = Graph()(this.graphContainer)
@@ -154,7 +157,8 @@ class Graph3DView extends ItemView {
 		if (!this.graph) return;
 		this.graph.backgroundColor(this.settings.backgroundColor);
 
-		this.graph.graphData().nodes.forEach((node: any) => {
+		this.graph.graphData().nodes.forEach((node: GraphNode) => {
+			// --- FIX: No 'any' cast needed as __threeObj is now in the interface ---
 			if (node.__threeObj) {
 				const color = this.getNodeColor(node);
 				(node.__threeObj as THREE.Mesh).material.color.set(color);
@@ -211,7 +215,7 @@ class Graph3DView extends ItemView {
 				shape = this.settings.attachmentShape;
 				size = this.settings.attachmentNodeSize;
 				break;
-			default:
+			default: // File
 				shape = this.settings.nodeShape;
 				size = this.settings.nodeSize;
 		}
@@ -304,9 +308,10 @@ class Graph3DView extends ItemView {
 					this.highlightedLinks.add(link);
 				}
 			});
-			if ((node as any).__threeObj) {
+			// --- FIX: No 'any' cast needed as __threeObj is now in the interface ---
+			if (node.__threeObj) {
 				const distance = 100;
-				const nodePosition = (node as any).__threeObj.position;
+				const nodePosition = node.__threeObj.position;
 				this.graph.cameraPosition({ x: nodePosition.x, y: nodePosition.y, z: nodePosition.z + distance }, nodePosition, 1000);
 			}
 		}
@@ -398,6 +403,8 @@ class Graph3DView extends ItemView {
 		this.graphContainer?.empty();
 	}
 }
+
+// --- Settings Tab Class ---
 
 class Graph3DSettingsTab extends PluginSettingTab {
 	plugin: Graph3DPlugin;
@@ -499,6 +506,8 @@ class Graph3DSettingsTab extends PluginSettingTab {
 	}
 }
 
+// --- Main Plugin Class ---
+
 export default class Graph3DPlugin extends Plugin {
 	settings: Graph3DPluginSettings;
 	async onload() {
@@ -515,9 +524,15 @@ export default class Graph3DPlugin extends Plugin {
 			}
 		});
 	}
-	onunload() { this.app.workspace.detachLeavesOfType(VIEW_TYPE_3D_GRAPH); }
+
+	// --- FIX: Remove detachLeavesOfType from onunload ---
+	onunload() {
+		console.log("Unloading 3D Graph Plugin");
+	}
+
 	async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
 	async saveSettings() { await this.saveData(this.settings); }
+
 	async activateView() {
 		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH);
 		if (leaves.length > 0) {
