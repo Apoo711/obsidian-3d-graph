@@ -86,7 +86,6 @@ interface GraphNode {
 	__threeObj?: THREE.Mesh;
 }
 
-// **FIX**: Add an interface for link objects to satisfy strict type checking.
 interface GraphLink {
 	source: string | GraphNode;
 	target: string | GraphNode;
@@ -167,6 +166,7 @@ class Graph3DView extends ItemView {
 		this.updateDisplay();
 		this.updateColors();
 		this.updateForces();
+		this.updateControls();
 	}
 
 	public async updateData() {
@@ -218,7 +218,6 @@ class Graph3DView extends ItemView {
 				const color = this.getNodeColor(node);
 				if (color) {
 					try {
-						// **FIX**: Assert the material type to access .color property.
 						(node.__threeObj.material as THREE.MeshLambertMaterial).color.set(color);
 					} catch (e) {
 						console.error(`3D Graph: Invalid color '${color}' for node`, node, e);
@@ -229,28 +228,33 @@ class Graph3DView extends ItemView {
 
 		const linkHighlightColor = this.settings.useThemeColors ? this.getCssColor('--graph-node-focused', this.settings.colorHighlight) : this.settings.colorHighlight;
 		const linkColor = this.settings.useThemeColors ? this.getCssColor('--graph-line', this.settings.colorLink) : this.settings.colorLink;
-		// **FIX**: Add explicit type for the link parameter.
 		this.graph.linkColor((link: GraphLink) => this.highlightedLinks.has(link) ? linkHighlightColor : linkColor);
 	}
 
+	/**
+	 * **FIX**: This function now robustly gets the final resolved color for any valid CSS color string
+	 * by drawing it to a temporary canvas and reading the pixel data.
+	 */
 	private getCssColor(variable: string, fallback: string): string {
 		try {
-			const tempEl = document.createElement('div');
-			tempEl.style.display = 'none';
-			tempEl.style.color = `var(${variable})`;
-			document.body.appendChild(tempEl);
-			let computedColor = getComputedStyle(tempEl).color;
-			document.body.removeChild(tempEl);
+			const canvas = document.createElement('canvas');
+			canvas.width = 1;
+			canvas.height = 1;
+			const ctx = canvas.getContext('2d');
+			if (!ctx) return fallback;
 
-			const srgbMatch = computedColor.match(/color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)\)/);
-			if (srgbMatch) {
-				const r = Math.round(parseFloat(srgbMatch[1]) * 255);
-				const g = Math.round(parseFloat(srgbMatch[2]) * 255);
-				const b = Math.round(parseFloat(srgbMatch[3]) * 255);
-				computedColor = `rgb(${r}, ${g}, ${b})`;
-			}
+			// Set the fill style to the CSS variable
+			ctx.fillStyle = `var(${variable})`;
+			// Draw a 1x1 rectangle
+			ctx.fillRect(0, 0, 1, 1);
 
-			return computedColor || fallback;
+			// Get the pixel data
+			const pixelData = ctx.getImageData(0, 0, 1, 1).data;
+			const [r, g, b] = pixelData;
+
+			// Return as an rgb string that three.js can parse
+			return `rgb(${r}, ${g}, ${b})`;
+
 		} catch (e) {
 			console.error(`3D Graph: Could not parse CSS color variable ${variable}`, e);
 			return fallback;
@@ -359,25 +363,27 @@ class Graph3DView extends ItemView {
 
 	public updateForces() {
 		if (!this.isGraphInitialized) return;
-
-		const { centerForce, repelForce, linkForce, rotateSpeed, panSpeed, zoomSpeed } = this.settings;
-
+		const { centerForce, repelForce, linkForce } = this.settings;
 		const forceSim = this.graph.d3Force('charge');
 		if (forceSim) {
 			this.graph.d3Force('center')?.strength(centerForce);
 			this.graph.d3Force('charge').strength(-repelForce);
 			this.graph.d3Force('link')?.strength(linkForce);
 		}
+		if (this.graph.graphData().nodes.length > 0) {
+			this.graph.d3ReheatSimulation();
+		}
+	}
 
+	// **FIX**: Create a separate function to update camera controls without reheating physics.
+	public updateControls() {
+		if (!this.isGraphInitialized) return;
+		const { rotateSpeed, panSpeed, zoomSpeed } = this.settings;
 		const controls = this.graph.controls();
 		if (controls) {
 			controls.rotateSpeed = rotateSpeed;
 			controls.panSpeed = panSpeed;
 			controls.zoomSpeed = zoomSpeed;
-		}
-
-		if (this.graph.graphData().nodes.length > 0) {
-			this.graph.d3ReheatSimulation();
 		}
 	}
 
@@ -414,7 +420,6 @@ class Graph3DView extends ItemView {
 
 			const allLinks = this.graph.graphData().links;
 
-			// **FIX**: Add explicit type for the link parameter.
 			allLinks.forEach((link: GraphLink) => {
 				const sourceId = typeof link.source === 'object' ? (link.source as GraphNode).id : link.source;
 				const targetId = typeof link.target === 'object' ? (link.target as GraphNode).id : link.target;
@@ -436,7 +441,6 @@ class Graph3DView extends ItemView {
 
 				if (highlightedNodeObjects.length > 0) {
 					const box = new THREE.Box3().setFromObject(highlightedNodeObjects[0]);
-					// **FIX**: Add explicit type for the obj parameter.
 					highlightedNodeObjects.slice(1).forEach((obj: THREE.Object3D) => box.expandByObject(obj));
 
 					const center = box.getCenter(new THREE.Vector3());
@@ -587,7 +591,7 @@ class Graph3DSettingsTab extends PluginSettingTab {
 	plugin: Graph3DPlugin;
 	constructor(app: App, plugin: Graph3DPlugin) { super(app, plugin); this.plugin = plugin; }
 
-	private triggerUpdate(options: { redrawData?: boolean, updateForces?: boolean, updateDisplay?: boolean }) {
+	private triggerUpdate(options: { redrawData?: boolean, updateForces?: boolean, updateDisplay?: boolean, updateControls?: boolean }) {
 		this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH).forEach(leaf => {
 			if (leaf.view instanceof Graph3DView) {
 				if (options.redrawData) {
@@ -597,7 +601,10 @@ class Graph3DSettingsTab extends PluginSettingTab {
 					leaf.view.updateColors();
 				} else if (options.updateForces) {
 					leaf.view.updateForces();
-				} else {
+				} else if (options.updateControls) {
+					leaf.view.updateControls();
+				}
+				else {
 					leaf.view.updateColors();
 				}
 			}
@@ -713,11 +720,11 @@ class Graph3DSettingsTab extends PluginSettingTab {
 			.addToggle(toggle => toggle.setValue(this.plugin.settings.zoomOnClick)
 				.onChange(async (value) => {this.plugin.settings.zoomOnClick = value; await this.plugin.saveSettings();}));
 		new Setting(containerEl).setName('Rotation Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.rotateSpeed).setDynamicTooltip()
-			.onChange(async (v) => {this.plugin.settings.rotateSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateForces: true });}));
+			.onChange(async (v) => {this.plugin.settings.rotateSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
 		new Setting(containerEl).setName('Pan Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.panSpeed).setDynamicTooltip()
-			.onChange(async (v) => {this.plugin.settings.panSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateForces: true });}));
+			.onChange(async (v) => {this.plugin.settings.panSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
 		new Setting(containerEl).setName('Zoom Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.zoomSpeed).setDynamicTooltip()
-			.onChange(async (v) => {this.plugin.settings.zoomSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateForces: true });}));
+			.onChange(async (v) => {this.plugin.settings.zoomSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
 
 		containerEl.createEl('h3', { text: 'Forces' });
 		new Setting(containerEl).setName('Center force').setDesc('How strongly nodes are pulled toward the center.')
@@ -748,7 +755,7 @@ export default class Graph3DPlugin extends Plugin {
 			}
 		});
 
-		const debouncedUpdate = debounce(() => this.triggerLiveUpdate(), 300, true);
+		const debouncedUpdate = debounce(() => this.triggerLiveUpdate(), 1000, true);
 		this.registerEvent(this.app.vault.on('create', debouncedUpdate));
 		this.registerEvent(this.app.vault.on('delete', debouncedUpdate));
 		this.registerEvent(this.app.vault.on('modify', debouncedUpdate));
@@ -765,18 +772,16 @@ export default class Graph3DPlugin extends Plugin {
 	}
 
 	onunload() {
+		this.app.workspace.detachLeavesOfType(VIEW_TYPE_3D_GRAPH);
 	}
 
 	async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
 	async saveSettings() { await this.saveData(this.settings); }
 
 	async activateView() {
-		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH);
-		if (leaves.length > 0) {
-			this.app.workspace.revealLeaf(leaves[0]);
-			return;
-		}
-		const leaf = this.app.workspace.getLeaf('tab');
+		this.app.workspace.detachLeavesOfType(VIEW_TYPE_3D_GRAPH);
+
+		const leaf = this.app.workspace.getLeaf(false);
 		await leaf.setViewState({ type: VIEW_TYPE_3D_GRAPH, active: true });
 		this.app.workspace.revealLeaf(leaf);
 	}
