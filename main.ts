@@ -83,8 +83,15 @@ interface GraphNode {
 	type: NodeType;
 	tags?: string[];
 	content?: string;
-	__threeObj?: THREE.Object3D;
+	__threeObj?: THREE.Mesh;
 }
+
+// **FIX**: Add an interface for link objects to satisfy strict type checking.
+interface GraphLink {
+	source: string | GraphNode;
+	target: string | GraphNode;
+}
+
 
 // --- Main View Class ---
 
@@ -207,11 +214,12 @@ class Graph3DView extends ItemView {
 		this.graph.backgroundColor(bgColor);
 
 		this.graph.graphData().nodes.forEach((node: GraphNode) => {
-			if (node.__threeObj) {
+			if (node.__threeObj && node.__threeObj.material) {
 				const color = this.getNodeColor(node);
 				if (color) {
 					try {
-						(node.__threeObj as THREE.Mesh).material.color.set(color);
+						// **FIX**: Assert the material type to access .color property.
+						(node.__threeObj.material as THREE.MeshLambertMaterial).color.set(color);
 					} catch (e) {
 						console.error(`3D Graph: Invalid color '${color}' for node`, node, e);
 					}
@@ -221,7 +229,8 @@ class Graph3DView extends ItemView {
 
 		const linkHighlightColor = this.settings.useThemeColors ? this.getCssColor('--graph-node-focused', this.settings.colorHighlight) : this.settings.colorHighlight;
 		const linkColor = this.settings.useThemeColors ? this.getCssColor('--graph-line', this.settings.colorLink) : this.settings.colorLink;
-		this.graph.linkColor(link => this.highlightedLinks.has(link) ? linkHighlightColor : linkColor);
+		// **FIX**: Add explicit type for the link parameter.
+		this.graph.linkColor((link: GraphLink) => this.highlightedLinks.has(link) ? linkHighlightColor : linkColor);
 	}
 
 	private getCssColor(variable: string, fallback: string): string {
@@ -310,10 +319,10 @@ class Graph3DView extends ItemView {
 		this.graph
 			.nodeLabel('name')
 			.nodeThreeObject((node: GraphNode) => this.createNodeObject(node))
-			.linkWidth(link => this.highlightedLinks.has(link) ? (this.settings.linkThickness * 1.5) : this.settings.linkThickness);
+			.linkWidth((link: GraphLink) => this.highlightedLinks.has(link) ? (this.settings.linkThickness * 1.5) : this.settings.linkThickness);
 	}
 
-	private createNodeObject(node: GraphNode): THREE.Object3D {
+	private createNodeObject(node: GraphNode): THREE.Mesh {
 		let shape: NodeShape;
 		let size: number;
 		switch (node.type) {
@@ -405,9 +414,10 @@ class Graph3DView extends ItemView {
 
 			const allLinks = this.graph.graphData().links;
 
-			allLinks.forEach((link: any) => {
-				const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-				const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+			// **FIX**: Add explicit type for the link parameter.
+			allLinks.forEach((link: GraphLink) => {
+				const sourceId = typeof link.source === 'object' ? (link.source as GraphNode).id : link.source;
+				const targetId = typeof link.target === 'object' ? (link.target as GraphNode).id : link.target;
 
 				if (sourceId === node.id) {
 					this.highlightedNodes.add(targetId);
@@ -426,7 +436,8 @@ class Graph3DView extends ItemView {
 
 				if (highlightedNodeObjects.length > 0) {
 					const box = new THREE.Box3().setFromObject(highlightedNodeObjects[0]);
-					highlightedNodeObjects.slice(1).forEach(obj => box.expandByObject(obj));
+					// **FIX**: Add explicit type for the obj parameter.
+					highlightedNodeObjects.slice(1).forEach((obj: THREE.Object3D) => box.expandByObject(obj));
 
 					const center = box.getCenter(new THREE.Vector3());
 					const size = box.getSize(new THREE.Vector3());
@@ -737,7 +748,7 @@ export default class Graph3DPlugin extends Plugin {
 			}
 		});
 
-		const debouncedUpdate = debounce(() => this.triggerLiveUpdate(), 1000, true);
+		const debouncedUpdate = debounce(() => this.triggerLiveUpdate(), 300, true);
 		this.registerEvent(this.app.vault.on('create', debouncedUpdate));
 		this.registerEvent(this.app.vault.on('delete', debouncedUpdate));
 		this.registerEvent(this.app.vault.on('modify', debouncedUpdate));
