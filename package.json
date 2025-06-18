@@ -1,6 +1,6 @@
 {
 	"name": "3D Graph Plugin",
-	"version": "2.1.0",
+	"version": "2.1.1",
 	"description": "A 3D Graph Plugin for Obsidian.",
 	"main": "main.js",
 	"scripts": {
