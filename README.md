@@ -30,8 +30,6 @@ A plugin for Obsidian that provides a highly customizable 3D, force-directed gra
 
 * **Stable & Performant:**
 
-	* Now uses `npm` packages for reliable offline performance.
-
 	* All settings update the graph instantly without requiring a reload.
 
 ## How to Install
