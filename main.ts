@@ -167,6 +167,7 @@ class Graph3DView extends ItemView {
 		this.updateDisplay();
 		this.updateColors();
 		this.updateForces();
+		this.updateControls();
 	}
 
 	public async updateData() {
@@ -370,7 +371,7 @@ class Graph3DView extends ItemView {
 	public updateForces() {
 		if (!this.isGraphInitialized) return;
 
-		const { centerForce, repelForce, linkForce, rotateSpeed, panSpeed, zoomSpeed } = this.settings;
+		const { centerForce, repelForce, linkForce } = this.settings;
 
 		const forceSim = this.graph.d3Force('charge');
 		if (forceSim) {
@@ -379,15 +380,19 @@ class Graph3DView extends ItemView {
 			this.graph.d3Force('link')?.strength(linkForce);
 		}
 
+		if (this.graph.graphData().nodes.length > 0) {
+			this.graph.d3ReheatSimulation();
+		}
+	}
+
+	public updateControls() {
+		if (!this.isGraphInitialized) return;
+		const { rotateSpeed, panSpeed, zoomSpeed } = this.settings;
 		const controls = this.graph.controls();
 		if (controls) {
 			controls.rotateSpeed = rotateSpeed;
 			controls.panSpeed = panSpeed;
 			controls.zoomSpeed = zoomSpeed;
-		}
-
-		if (this.graph.graphData().nodes.length > 0) {
-			this.graph.d3ReheatSimulation();
 		}
 	}
 
@@ -597,7 +602,7 @@ class Graph3DSettingsTab extends PluginSettingTab {
 	plugin: Graph3DPlugin;
 	constructor(app: App, plugin: Graph3DPlugin) { super(app, plugin); this.plugin = plugin; }
 
-	private triggerUpdate(options: { redrawData?: boolean, updateForces?: boolean, updateDisplay?: boolean }) {
+	private triggerUpdate(options: { redrawData?: boolean, updateForces?: boolean, updateDisplay?: boolean, updateControls?: boolean }) {
 		this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH).forEach(leaf => {
 			if (leaf.view instanceof Graph3DView) {
 				if (options.redrawData) {
@@ -607,6 +612,8 @@ class Graph3DSettingsTab extends PluginSettingTab {
 					leaf.view.updateColors();
 				} else if (options.updateForces) {
 					leaf.view.updateForces();
+				} else if (options.updateControls) {
+					leaf.view.updateControls();
 				} else {
 					leaf.view.updateColors();
 				}
@@ -723,11 +730,11 @@ class Graph3DSettingsTab extends PluginSettingTab {
 			.addToggle(toggle => toggle.setValue(this.plugin.settings.zoomOnClick)
 				.onChange(async (value) => {this.plugin.settings.zoomOnClick = value; await this.plugin.saveSettings();}));
 		new Setting(containerEl).setName('Rotation Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.rotateSpeed).setDynamicTooltip()
-			.onChange(async (v) => {this.plugin.settings.rotateSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateForces: true });}));
+			.onChange(async (v) => {this.plugin.settings.rotateSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
 		new Setting(containerEl).setName('Pan Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.panSpeed).setDynamicTooltip()
-			.onChange(async (v) => {this.plugin.settings.panSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateForces: true });}));
+			.onChange(async (v) => {this.plugin.settings.panSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
 		new Setting(containerEl).setName('Zoom Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.zoomSpeed).setDynamicTooltip()
-			.onChange(async (v) => {this.plugin.settings.zoomSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateForces: true });}));
+			.onChange(async (v) => {this.plugin.settings.zoomSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
 
 		containerEl.createEl('h3', { text: 'Forces' });
 		new Setting(containerEl).setName('Center force').setDesc('How strongly nodes are pulled toward the center.')
