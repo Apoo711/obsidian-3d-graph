@@ -86,7 +86,6 @@ interface GraphNode {
 	__threeObj?: THREE.Mesh;
 }
 
-// **FIX**: Add an interface for link objects to satisfy strict type checking.
 interface GraphLink {
 	source: string | GraphNode;
 	target: string | GraphNode;
@@ -104,6 +103,9 @@ class Graph3DView extends ItemView {
 	private highlightedNodes = new Set<string>();
 	private highlightedLinks = new Set<object>();
 	private selectedNode: string | null = null;
+
+	// --- Caching for performance ---
+	private colorCache = new Map<string, string>();
 
 	private graphContainer: HTMLDivElement;
 	private messageEl: HTMLDivElement;
@@ -195,6 +197,7 @@ class Graph3DView extends ItemView {
 					.onNodeClick((node: GraphNode) => this.handleNodeClick(node))
 					.graphData({ nodes: [], links: [] });
 
+				this.colorCache.clear(); // Clear cache for background color
 				const bgColor = this.settings.useThemeColors ? this.getCssColor('--background-primary', '#000000') : this.settings.backgroundColor;
 				this.graph.backgroundColor(bgColor);
 				this.messageEl.setText("No search results found.");
@@ -211,6 +214,10 @@ class Graph3DView extends ItemView {
 
 	public updateColors() {
 		if (!this.isGraphInitialized) return;
+
+		// Clear cache at the start of every color update
+		this.colorCache.clear();
+
 		const bgColor = this.settings.useThemeColors ? this.getCssColor('--background-primary', '#000000') : this.settings.backgroundColor;
 		this.graph.backgroundColor(bgColor);
 
@@ -219,7 +226,6 @@ class Graph3DView extends ItemView {
 				const color = this.getNodeColor(node);
 				if (color) {
 					try {
-						// **FIX**: Assert the material type to access .color property.
 						(node.__threeObj.material as THREE.MeshLambertMaterial).color.set(color);
 					} catch (e) {
 						console.error(`3D Graph: Invalid color '${color}' for node`, node, e);
@@ -230,11 +236,16 @@ class Graph3DView extends ItemView {
 
 		const linkHighlightColor = this.settings.useThemeColors ? this.getCssColor('--graph-node-focused', this.settings.colorHighlight) : this.settings.colorHighlight;
 		const linkColor = this.settings.useThemeColors ? this.getCssColor('--graph-line', this.settings.colorLink) : this.settings.colorLink;
-		// **FIX**: Add explicit type for the link parameter.
 		this.graph.linkColor((link: GraphLink) => this.highlightedLinks.has(link) ? linkHighlightColor : linkColor);
 	}
 
+	// --- MODIFIED FUNCTION ---
 	private getCssColor(variable: string, fallback: string): string {
+		// Check cache first
+		if (this.colorCache.has(variable)) {
+			return this.colorCache.get(variable)!;
+		}
+
 		try {
 			// Create a temporary element to apply the CSS variable
 			const tempEl = document.createElement('div');
@@ -244,7 +255,6 @@ class Graph3DView extends ItemView {
 
 			// Get the computed color style
 			const computedColor = getComputedStyle(tempEl).color;
-
 			document.body.removeChild(tempEl);
 
 			// Use a canvas to convert the color to a reliable format
@@ -253,17 +263,20 @@ class Graph3DView extends ItemView {
 			canvas.height = 1;
 			const ctx = canvas.getContext('2d');
 			if (!ctx) {
+				this.colorCache.set(variable, fallback);
 				return fallback;
 			}
 			ctx.fillStyle = computedColor;
 			ctx.fillRect(0, 0, 1, 1);
 			const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
 
-			// Return the color in a format Three.js understands
-			return `rgb(${r}, ${g}, ${b})`;
+			const finalColor = `rgb(${r}, ${g}, ${b})`;
+			this.colorCache.set(variable, finalColor);
+			return finalColor;
 
 		} catch (e) {
 			console.error(`3D Graph: Could not parse CSS color variable ${variable}`, e);
+			this.colorCache.set(variable, fallback);
 			return fallback;
 		}
 	}
@@ -279,6 +292,8 @@ class Graph3DView extends ItemView {
 			const query = group.query.toLowerCase();
 			if (!query) continue;
 
+			// For group colors, we don't use the theme system, so we don't cache them.
+			// These are direct hex/rgb values from the settings.
 			if (query.startsWith('path:')) {
 				const pathQuery = query.substring(5).trim();
 				if (node.type !== NodeType.Tag && node.id.toLowerCase().startsWith(pathQuery)) {
@@ -354,7 +369,7 @@ class Graph3DView extends ItemView {
 
 		const color = this.getNodeColor(node);
 		const material = new THREE.MeshLambertMaterial({
-			color: '#ffffff',
+			color: '#ffffff', // Default color, will be overwritten
 			transparent: true,
 			opacity: 0.9
 		});
@@ -363,6 +378,7 @@ class Graph3DView extends ItemView {
 			material.color.set(color);
 		} catch (e) {
 			console.error(`3D Graph: Could not set material color to '${color}'`, e);
+			material.color.set(this.settings.colorNode); // Fallback to default node color
 		}
 
 		return new THREE.Mesh(geometry, material);
@@ -429,7 +445,6 @@ class Graph3DView extends ItemView {
 
 			const allLinks = this.graph.graphData().links;
 
-			// **FIX**: Add explicit type for the link parameter.
 			allLinks.forEach((link: GraphLink) => {
 				const sourceId = typeof link.source === 'object' ? (link.source as GraphNode).id : link.source;
 				const targetId = typeof link.target === 'object' ? (link.target as GraphNode).id : link.target;
@@ -451,7 +466,6 @@ class Graph3DView extends ItemView {
 
 				if (highlightedNodeObjects.length > 0) {
 					const box = new THREE.Box3().setFromObject(highlightedNodeObjects[0]);
-					// **FIX**: Add explicit type for the obj parameter.
 					highlightedNodeObjects.slice(1).forEach((obj: THREE.Object3D) => box.expandByObject(obj));
 
 					const center = box.getCenter(new THREE.Vector3());
