@@ -1,5 +1,5 @@
 // main.ts
-import { App, ItemView, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, debounce } from 'obsidian';
+import { App, ItemView, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, debounce, setIcon } from 'obsidian';
 import ForceGraph3D from '3d-force-graph';
 import * as THREE from 'three';
 
@@ -109,6 +109,9 @@ class Graph3DView extends ItemView {
 
 	private graphContainer: HTMLDivElement;
 	private messageEl: HTMLDivElement;
+	private settingsPanel: HTMLDivElement;
+	private settingsToggleButton: HTMLDivElement;
+
 	private clickTimeout: any = null;
 	private isGraphInitialized = false;
 	private isUpdating = false;
@@ -126,6 +129,7 @@ class Graph3DView extends ItemView {
 	async onOpen() {
 		const rootContainer = this.contentEl;
 		rootContainer.empty();
+		rootContainer.style.position = 'relative'; // Parent for absolute positioning
 
 		const viewWrapper = rootContainer.createEl('div');
 		viewWrapper.style.position = 'relative';
@@ -135,6 +139,7 @@ class Graph3DView extends ItemView {
 		this.graphContainer = viewWrapper.createEl('div', { cls: 'graph-3d-container' });
 		this.messageEl = viewWrapper.createEl('div', { cls: 'graph-3d-message' });
 
+		this.addLocalControls();
 		this.initializeGraph();
 
 		this.resizeObserver = new ResizeObserver(() => {
@@ -144,6 +149,233 @@ class Graph3DView extends ItemView {
 			}
 		});
 		this.resizeObserver.observe(this.graphContainer);
+	}
+
+	private addLocalControls() {
+		const controlsContainer = this.contentEl.createEl('div', { cls: 'graph-3d-controls-container' });
+
+		this.settingsToggleButton = controlsContainer.createEl('div', { cls: 'graph-3d-settings-toggle' });
+		setIcon(this.settingsToggleButton, 'settings');
+		this.settingsToggleButton.setAttribute('aria-label', 'Graph settings');
+
+		this.settingsPanel = controlsContainer.createEl('div', { cls: 'graph-3d-settings-panel' });
+
+		this.settingsToggleButton.addEventListener('click', () => {
+			this.settingsPanel.classList.toggle('is-open');
+		});
+
+		this.renderSettingsPanel();
+	}
+
+	private renderSettingsPanel() {
+		this.settingsPanel.empty();
+
+		this.renderSearchSettings(this.settingsPanel);
+		this.renderFilterSettings(this.settingsPanel);
+		this.renderGroupSettings(this.settingsPanel);
+		this.renderAppearanceSettings(this.settingsPanel);
+		this.renderInteractionSettings(this.settingsPanel);
+		this.renderForceSettings(this.settingsPanel);
+	}
+
+	private renderSearchSettings(container: HTMLElement) {
+		new Setting(container).setHeading().setName('Search');
+		new Setting(container)
+			.setName('Search term')
+			.addText(text => text
+				.setValue(this.settings.searchQuery)
+				.onChange(debounce(async (value) => {
+					this.settings.searchQuery = value.trim();
+					await this.plugin.saveSettings();
+					this.updateData();
+				}, 500, true)));
+
+		new Setting(container)
+			.setName('Show neighboring nodes')
+			.addToggle(toggle => toggle
+				.setValue(this.settings.showNeighboringNodes)
+				.onChange(async (value) => {
+					this.settings.showNeighboringNodes = value;
+					await this.plugin.saveSettings();
+					if (this.settings.searchQuery) {
+						this.updateData();
+					}
+				}));
+	}
+
+	private renderFilterSettings(container: HTMLElement) {
+		new Setting(container).setHeading().setName('Filters');
+
+		new Setting(container).setName('Show tags').addToggle(toggle => toggle
+			.setValue(this.settings.showTags)
+			.onChange(async (value) => {
+				this.settings.showTags = value;
+				await this.plugin.saveSettings();
+				this.updateData();
+			}));
+
+		new Setting(container).setName('Show attachments').addToggle(toggle => toggle
+			.setValue(this.settings.showAttachments)
+			.onChange(async (value) => {
+				this.settings.showAttachments = value;
+				await this.plugin.saveSettings();
+				this.updateData();
+			}));
+
+		new Setting(container).setName('Hide orphans').addToggle(toggle => toggle
+			.setValue(this.settings.hideOrphans)
+			.onChange(async (value) => {
+				this.settings.hideOrphans = value;
+				await this.plugin.saveSettings();
+				this.updateData();
+			}));
+	}
+
+	private renderGroupSettings(container: HTMLElement) {
+		const groupContainer = container.createDiv();
+		const render = () => {
+			groupContainer.empty();
+			new Setting(groupContainer).setHeading().setName('Groups');
+
+			this.settings.groups.forEach((group, index) => {
+				new Setting(groupContainer)
+					.addText(text => text
+						.setPlaceholder('path:, tag:, file:, or text')
+						.setValue(group.query)
+						.onChange(async (value) => {
+							group.query = value;
+							await this.plugin.saveSettings();
+							this.updateDisplay();
+							this.updateColors();
+						}))
+					.addColorPicker(color => color
+						.setValue(group.color)
+						.onChange(async (value) => {
+							group.color = value;
+							await this.plugin.saveSettings();
+							this.updateDisplay();
+							this.updateColors();
+						}))
+					.addExtraButton(button => button
+						.setIcon('cross')
+						.setTooltip('Remove group')
+						.onClick(async () => {
+							this.settings.groups.splice(index, 1);
+							await this.plugin.saveSettings();
+							render(); // Re-render the group section
+							this.updateDisplay();
+							this.updateColors();
+						}));
+			});
+
+			new Setting(groupContainer)
+				.addButton(button => button
+					.setButtonText('Add new group')
+					.onClick(async () => {
+						this.settings.groups.push({ query: '', color: '#ffffff' });
+						await this.plugin.saveSettings();
+						render(); // Re-render
+					}));
+		};
+		render();
+	}
+
+	private renderAppearanceSettings(container: HTMLElement) {
+		new Setting(container).setHeading().setName('Appearance');
+
+		const updateDisplayAndColors = async () => {
+			await this.plugin.saveSettings();
+			this.updateDisplay();
+			this.updateColors();
+		}
+
+		new Setting(container).setName('Node size').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.nodeSize).setDynamicTooltip()
+			.onChange(async (v) => { this.settings.nodeSize = v; await updateDisplayAndColors(); }));
+		new Setting(container).setName('Tag node size').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.tagNodeSize).setDynamicTooltip()
+			.onChange(async (v) => { this.settings.tagNodeSize = v; await updateDisplayAndColors(); }));
+		new Setting(container).setName('Attachment node size').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.attachmentNodeSize).setDynamicTooltip()
+			.onChange(async (v) => { this.settings.attachmentNodeSize = v; await updateDisplayAndColors(); }));
+		new Setting(container).setName('Link thickness').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.linkThickness).setDynamicTooltip()
+			.onChange(async (v) => { this.settings.linkThickness = v; await updateDisplayAndColors(); }));
+
+		new Setting(container).setName('Node shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.settings.nodeShape)
+			.onChange(async(value: NodeShape) => {this.settings.nodeShape = value; await updateDisplayAndColors()}));
+		new Setting(container).setName('Tag shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.settings.tagShape)
+			.onChange(async(value: NodeShape) => {this.settings.tagShape = value; await updateDisplayAndColors()}));
+		new Setting(container).setName('Attachment shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.settings.attachmentShape)
+			.onChange(async(value: NodeShape) => {this.settings.attachmentShape = value; await updateDisplayAndColors()}));
+	}
+
+	private renderInteractionSettings(container: HTMLElement) {
+		new Setting(container).setHeading().setName('Interaction');
+
+		new Setting(container).setName("Zoom on click")
+			.addToggle(toggle => toggle.setValue(this.settings.zoomOnClick)
+				.onChange(async (value) => {
+					this.settings.zoomOnClick = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(container).setName('Rotation Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.rotateSpeed).setDynamicTooltip()
+			.onChange(async (v) => {
+				this.settings.rotateSpeed = v;
+				await this.plugin.saveSettings();
+				this.updateControls();
+			}));
+
+		new Setting(container).setName('Pan Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.panSpeed).setDynamicTooltip()
+			.onChange(async (v) => {
+				this.settings.panSpeed = v;
+				await this.plugin.saveSettings();
+				this.updateControls();
+			}));
+
+		new Setting(container).setName('Zoom Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.zoomSpeed).setDynamicTooltip()
+			.onChange(async (v) => {
+				this.settings.zoomSpeed = v;
+				await this.plugin.saveSettings();
+				this.updateControls();
+			}));
+	}
+
+	private renderForceSettings(container: HTMLElement) {
+		new Setting(container).setHeading().setName('Forces');
+
+		new Setting(container)
+			.setName('Center force')
+			.addSlider(slider => slider
+				.setLimits(0, 1, 0.01)
+				.setValue(this.settings.centerForce)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.settings.centerForce = value;
+					await this.plugin.saveSettings();
+					this.updateForces();
+				}));
+
+		new Setting(container)
+			.setName('Repel force')
+			.addSlider(slider => slider
+				.setLimits(0, 20, 0.1)
+				.setValue(this.settings.repelForce)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.settings.repelForce = value;
+					await this.plugin.saveSettings();
+					this.updateForces();
+				}));
+
+		new Setting(container)
+			.setName('Link force')
+			.addSlider(slider => slider
+				.setLimits(0, 0.1, 0.001)
+				.setValue(this.settings.linkForce)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.settings.linkForce = value;
+					await this.plugin.saveSettings();
+					this.updateForces();
+				}));
 	}
 
 	initializeGraph() {
@@ -239,7 +471,6 @@ class Graph3DView extends ItemView {
 		this.graph.linkColor((link: GraphLink) => this.highlightedLinks.has(link) ? linkHighlightColor : linkColor);
 	}
 
-	// --- MODIFIED FUNCTION ---
 	private getCssColor(variable: string, fallback: string): string {
 		// Check cache first
 		if (this.colorCache.has(variable)) {
@@ -619,6 +850,11 @@ class Graph3DSettingsTab extends PluginSettingTab {
 	private triggerUpdate(options: { redrawData?: boolean, updateForces?: boolean, updateDisplay?: boolean, updateControls?: boolean }) {
 		this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH).forEach(leaf => {
 			if (leaf.view instanceof Graph3DView) {
+				// Also re-render the local settings panel if it's open
+				if (leaf.view.isSettingsPanelOpen()) {
+					leaf.view.renderSettingsPanel();
+				}
+
 				if (options.redrawData) {
 					leaf.view.updateData();
 				} else if (options.updateDisplay) {

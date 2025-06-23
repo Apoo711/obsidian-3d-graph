@@ -14,3 +14,53 @@
 	z-index: 10;
 	font-size: var(--font-ui-large);
 }
+
+.graph-3d-controls-container {
+	position: absolute;
+	top: 10px;
+	right: 10px;
+	z-index: 10;
+}
+
+.graph-3d-settings-toggle {
+	cursor: pointer;
+	padding: 8px;
+	background-color: var(--background-secondary-alt);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.graph-3d-settings-toggle:hover {
+	background-color: var(--background-modifier-hover);
+}
+
+.graph-3d-settings-panel {
+	display: none;
+	position: absolute;
+	top: 45px;
+	right: 0;
+	width: 350px;
+	max-height: 80vh;
+	overflow-y: auto;
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 16px;
+	box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.graph-3d-settings-panel.is-open {
+	display: block;
+}
+
+.graph-3d-settings-panel .setting-item {
+	border-top: 1px solid var(--background-modifier-border);
+	padding: 10px 0;
+}
+
+.graph-3d-settings-panel .setting-item:first-child {
+	border-top: none;
+}
