@@ -167,7 +167,8 @@ class Graph3DView extends ItemView {
 		this.renderSettingsPanel();
 	}
 
-	private renderSettingsPanel() {
+	// --- FIX: Method made public to be accessible from SettingsTab ---
+	public renderSettingsPanel() {
 		this.settingsPanel.empty();
 
 		this.renderSearchSettings(this.settingsPanel);
@@ -176,6 +177,11 @@ class Graph3DView extends ItemView {
 		this.renderAppearanceSettings(this.settingsPanel);
 		this.renderInteractionSettings(this.settingsPanel);
 		this.renderForceSettings(this.settingsPanel);
+	}
+
+	// --- FIX: New public helper method ---
+	public isSettingsPanelOpen(): boolean {
+		return this.settingsPanel?.classList.contains('is-open');
 	}
 
 	private renderSearchSettings(container: HTMLElement) {
