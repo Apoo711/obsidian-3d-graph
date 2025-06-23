@@ -1,7 +1,7 @@
 {
 	"id": "new-3d-graph",
 	"name": "New 3D Graph",
-	"version": "2.1.3",
+	"version": "2.2.0",
 	"minAppVersion": "1.5.0",
 	"description": "Visualize your Vault in 3D with a powerful, highly customizable, and filterable graph.",
 	"author": "Aryan Gupta",
