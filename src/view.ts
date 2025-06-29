@@ -261,7 +261,7 @@ export class Graph3DView extends ItemView {
 				.onChange(async (value) => {
 					this.settings.centerForce = value;
 					await this.plugin.saveSettings();
-					this.updateForces();
+					this.updateForces(true); // Reheat on change
 				}));
 
 		new Setting(container)
@@ -273,7 +273,7 @@ export class Graph3DView extends ItemView {
 				.onChange(async (value) => {
 					this.settings.repelForce = value;
 					await this.plugin.saveSettings();
-					this.updateForces();
+					this.updateForces(true); // Reheat on change
 				}));
 
 		new Setting(container)
@@ -285,7 +285,7 @@ export class Graph3DView extends ItemView {
 				.onChange(async (value) => {
 					this.settings.linkForce = value;
 					await this.plugin.saveSettings();
-					this.updateForces();
+					this.updateForces(true); // Reheat on change
 				}));
 	}
 
@@ -301,19 +301,11 @@ export class Graph3DView extends ItemView {
 			this.graph.pauseAnimation();
 			this.isGraphInitialized = true;
 
-			setTimeout(() => { this.updateData(); }, 100);
+			setTimeout(() => { this.updateData(true); }, 100);
 		});
 	}
 
-	public updateAll() {
-		if (!this.isGraphInitialized) return;
-		this.updateDisplay();
-		this.updateColors();
-		this.updateForces();
-		this.updateControls();
-	}
-
-	public async updateData() {
+	public async updateData(isFirstLoad = false) {
 		if (!this.isGraphInitialized || this.isUpdating) {
 			return;
 		}
@@ -345,7 +337,18 @@ export class Graph3DView extends ItemView {
 				this.graph.pauseAnimation();
 				this.messageEl.style.display = 'none';
 				this.graph.graphData(newData);
-				this.updateAll();
+
+				// Call all update functions without reheating
+				this.updateDisplay();
+				this.updateColors();
+				this.updateControls();
+				this.updateForces(false); // Do not reheat on data change
+
+				// Only reheat on the very first load
+				if (isFirstLoad) {
+					this.graph.d3ReheatSimulation();
+				}
+
 				this.graph.resumeAnimation();
 			} else {
 				if (this.graph && typeof this.graph._destructor === 'function') { this.graph._destructor(); }
@@ -532,7 +535,7 @@ export class Graph3DView extends ItemView {
 		return new THREE.Mesh(geometry, material);
 	}
 
-	public updateForces() {
+	public updateForces(reheat = false) {
 		if (!this.isGraphInitialized) return;
 
 		const { centerForce, repelForce, linkForce } = this.settings;
@@ -542,10 +545,9 @@ export class Graph3DView extends ItemView {
 			this.graph.d3Force('center')?.strength(centerForce);
 			this.graph.d3Force('charge').strength(-repelForce);
 			this.graph.d3Force('link')?.strength(linkForce);
-		}
-
-		if (this.graph.graphData().nodes.length > 0) {
-			this.graph.d3ReheatSimulation();
+			if (reheat) {
+				this.graph.d3ReheatSimulation();
+			}
 		}
 	}
 
