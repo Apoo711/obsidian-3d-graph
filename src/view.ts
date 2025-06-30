@@ -24,6 +24,10 @@ export class Graph3DView extends ItemView {
 	private settingsPanel: HTMLDivElement;
 	private settingsToggleButton: HTMLDivElement;
 
+	private chargeForce: any;
+	private centerForce: any;
+	private linkForce: any;
+
 	private clickTimeout: any = null;
 	private isGraphInitialized = false;
 	private isUpdating = false;
@@ -98,7 +102,7 @@ export class Graph3DView extends ItemView {
 				.onChange(debounce(async (value) => {
 					this.settings.searchQuery = value.trim();
 					await this.plugin.saveSettings();
-					this.updateData();
+					this.updateData({ useCache: true, reheat: false });
 				}, 500, true)));
 
 		new Setting(container)
@@ -109,7 +113,7 @@ export class Graph3DView extends ItemView {
 					this.settings.showNeighboringNodes = value;
 					await this.plugin.saveSettings();
 					if (this.settings.searchQuery) {
-						this.updateData();
+						this.updateData({ useCache: true, reheat: false });
 					}
 				}));
 	}
@@ -122,7 +126,7 @@ export class Graph3DView extends ItemView {
 			.onChange(async (value) => {
 				this.settings.showTags = value;
 				await this.plugin.saveSettings();
-				this.updateData();
+				this.updateData({ useCache: true, reheat: false });
 			}));
 
 		new Setting(container).setName('Show attachments').addToggle(toggle => toggle
@@ -130,7 +134,7 @@ export class Graph3DView extends ItemView {
 			.onChange(async (value) => {
 				this.settings.showAttachments = value;
 				await this.plugin.saveSettings();
-				this.updateData();
+				this.updateData({ useCache: true, reheat: false });
 			}));
 
 		new Setting(container).setName('Hide orphans').addToggle(toggle => toggle
@@ -138,7 +142,7 @@ export class Graph3DView extends ItemView {
 			.onChange(async (value) => {
 				this.settings.hideOrphans = value;
 				await this.plugin.saveSettings();
-				this.updateData();
+				this.updateData({ useCache: true, reheat: false });
 			}));
 	}
 
@@ -173,7 +177,7 @@ export class Graph3DView extends ItemView {
 						.onClick(async () => {
 							this.settings.groups.splice(index, 1);
 							await this.plugin.saveSettings();
-							render(); // Re-render the group section
+							render();
 							this.updateDisplay();
 							this.updateColors();
 						}));
@@ -185,7 +189,7 @@ export class Graph3DView extends ItemView {
 					.onClick(async () => {
 						this.settings.groups.push({ query: '', color: '#ffffff' });
 						await this.plugin.saveSettings();
-						render(); // Re-render
+						render();
 					}));
 		};
 		render();
@@ -252,6 +256,11 @@ export class Graph3DView extends ItemView {
 	private renderForceSettings(container: HTMLElement) {
 		new Setting(container).setHeading().setName('Forces');
 
+		const forceChangeHandler = async () => {
+			await this.plugin.saveSettings();
+			this.updateData({ useCache: false, reheat: true });
+		};
+
 		new Setting(container)
 			.setName('Center force')
 			.addSlider(slider => slider
@@ -260,8 +269,7 @@ export class Graph3DView extends ItemView {
 				.setDynamicTooltip()
 				.onChange(async (value) => {
 					this.settings.centerForce = value;
-					await this.plugin.saveSettings();
-					this.updateForces(true); // Reheat on change
+					await forceChangeHandler();
 				}));
 
 		new Setting(container)
@@ -272,8 +280,7 @@ export class Graph3DView extends ItemView {
 				.setDynamicTooltip()
 				.onChange(async (value) => {
 					this.settings.repelForce = value;
-					await this.plugin.saveSettings();
-					this.updateForces(true); // Reheat on change
+					await forceChangeHandler();
 				}));
 
 		new Setting(container)
@@ -284,9 +291,14 @@ export class Graph3DView extends ItemView {
 				.setDynamicTooltip()
 				.onChange(async (value) => {
 					this.settings.linkForce = value;
-					await this.plugin.saveSettings();
-					this.updateForces(true); // Reheat on change
+					await forceChangeHandler();
 				}));
+	}
+
+	private initializeForces() {
+		this.chargeForce = this.graph.d3Force('charge');
+		this.centerForce = this.graph.d3Force('center');
+		this.linkForce = this.graph.d3Force('link');
 	}
 
 	initializeGraph() {
@@ -298,22 +310,25 @@ export class Graph3DView extends ItemView {
 				.onNodeClick((node: GraphNode) => this.handleNodeClick(node))
 				.graphData({ nodes: [], links: [] });
 
+			this.initializeForces();
 			this.graph.pauseAnimation();
 			this.isGraphInitialized = true;
 
-			setTimeout(() => { this.updateData(true); }, 100);
+			setTimeout(() => { this.updateData({ isFirstLoad: true }); }, 100);
 		});
 	}
 
-	public async updateData(isFirstLoad = false) {
+	public async updateData(options: { useCache?: boolean; reheat?: boolean; isFirstLoad?: boolean } = {}) {
+		const { useCache = true, reheat = false, isFirstLoad = false } = options;
+
 		if (!this.isGraphInitialized || this.isUpdating) {
 			return;
 		}
 		this.isUpdating = true;
 
 		try {
-			const nodePositions = new Map<string, {x: number, y: number, z: number}>();
-			if (this.graph.graphData().nodes.length > 0) {
+			const nodePositions = new Map<string, { x: number; y: number; z: number }>();
+			if (useCache && this.graph.graphData().nodes.length > 0) {
 				this.graph.graphData().nodes.forEach((node: GraphNode) => {
 					if (node.id && node.x !== undefined && node.y !== undefined && node.z !== undefined) {
 						nodePositions.set(node.id, { x: node.x, y: node.y, z: node.z });
@@ -325,40 +340,49 @@ export class Graph3DView extends ItemView {
 			const hasNodes = newData && newData.nodes.length > 0;
 
 			if (hasNodes) {
-				newData.nodes.forEach(node => {
-					const pos = nodePositions.get(node.id);
-					if (pos) {
-						node.x = pos.x;
-						node.y = pos.y;
-						node.z = pos.z;
-					}
-				});
+				if (useCache) {
+					newData.nodes.forEach(node => {
+						const pos = nodePositions.get(node.id);
+						if (pos) {
+							node.x = pos.x;
+							node.y = pos.y;
+							node.z = pos.z;
+						}
+					});
+				}
 
 				this.graph.pauseAnimation();
 				this.messageEl.style.display = 'none';
 				this.graph.graphData(newData);
 
-				// Call all update functions without reheating
+				this.updateForces();
 				this.updateDisplay();
 				this.updateColors();
 				this.updateControls();
-				this.updateForces(false); // Do not reheat on data change
 
-				// Only reheat on the very first load
-				if (isFirstLoad) {
+				if (isFirstLoad || reheat) {
+					// Reset simulation "energy" before reheating
+					this.graph.d3AlphaDecay(0.0228);
+					this.graph.d3VelocityDecay(0.4);
 					this.graph.d3ReheatSimulation();
 				}
 
 				this.graph.resumeAnimation();
 			} else {
-				if (this.graph && typeof this.graph._destructor === 'function') { this.graph._destructor(); }
+				if (this.graph && typeof this.graph._destructor === 'function') {
+					this.graph._destructor();
+				}
 				const Graph = (ForceGraph3D as any).default || ForceGraph3D;
 				this.graph = Graph()(this.graphContainer)
 					.onNodeClick((node: GraphNode) => this.handleNodeClick(node))
 					.graphData({ nodes: [], links: [] });
 
+				this.initializeForces();
+
 				this.colorCache.clear();
-				const bgColor = this.settings.useThemeColors ? this.getCssColor('--background-primary', '#000000') : this.settings.backgroundColor;
+				const bgColor = this.settings.useThemeColors
+					? this.getCssColor('--background-primary', '#000000')
+					: this.settings.backgroundColor;
 				this.graph.backgroundColor(bgColor);
 				this.messageEl.setText("No search results found.");
 				this.messageEl.style.display = 'block';
@@ -535,19 +559,19 @@ export class Graph3DView extends ItemView {
 		return new THREE.Mesh(geometry, material);
 	}
 
-	public updateForces(reheat = false) {
+	public updateForces() {
 		if (!this.isGraphInitialized) return;
 
 		const { centerForce, repelForce, linkForce } = this.settings;
 
-		const forceSim = this.graph.d3Force('charge');
-		if (forceSim) {
-			this.graph.d3Force('center')?.strength(centerForce);
-			this.graph.d3Force('charge').strength(-repelForce);
-			this.graph.d3Force('link')?.strength(linkForce);
-			if (reheat) {
-				this.graph.d3ReheatSimulation();
-			}
+		if (this.centerForce) {
+			this.centerForce.strength(centerForce);
+		}
+		if (this.chargeForce) {
+			this.chargeForce.strength(-repelForce);
+		}
+		if (this.linkForce) {
+			this.linkForce.strength(linkForce);
 		}
 	}
 

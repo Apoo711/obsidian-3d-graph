@@ -8,7 +8,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 	plugin: Graph3DPlugin;
 	constructor(app: App, plugin: Graph3DPlugin) { super(app, plugin); this.plugin = plugin; }
 
-	private triggerUpdate(options: { redrawData?: boolean, updateForces?: boolean, updateDisplay?: boolean, updateControls?: boolean }) {
+	private triggerUpdate(options: { redrawData?: boolean, useCache?: boolean, reheat?: boolean, updateDisplay?: boolean, updateControls?: boolean }) {
 		this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH).forEach(leaf => {
 			if (leaf.view instanceof Graph3DView) {
 				if (leaf.view.isSettingsPanelOpen()) {
@@ -16,12 +16,11 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 				}
 
 				if (options.redrawData) {
-					leaf.view.updateData();
+					// Pass cache and reheat options through
+					leaf.view.updateData({ useCache: options.useCache, reheat: options.reheat });
 				} else if (options.updateDisplay) {
 					leaf.view.updateDisplay();
 					leaf.view.updateColors();
-				} else if (options.updateForces) {
-					leaf.view.updateForces();
 				} else if (options.updateControls) {
 					leaf.view.updateControls();
 				} else {
@@ -43,7 +42,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 				.onChange(debounce(async (value) => {
 					this.plugin.settings.searchQuery = value.trim();
 					await this.plugin.saveSettings();
-					this.triggerUpdate({ redrawData: true });
+					this.triggerUpdate({ redrawData: true, useCache: true });
 				}, 500, true)));
 
 		new Setting(containerEl).setName('Show neighboring nodes')
@@ -53,17 +52,17 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 					this.plugin.settings.showNeighboringNodes = value;
 					await this.plugin.saveSettings();
 					if (this.plugin.settings.searchQuery) {
-						this.triggerUpdate({ redrawData: true });
+						this.triggerUpdate({ redrawData: true, useCache: true });
 					}
 				}));
 
 		containerEl.createEl('h3', { text: 'Filters' });
 		new Setting(containerEl).setName('Show tags').addToggle(toggle => toggle.setValue(this.plugin.settings.showTags)
-			.onChange(async (value) => { this.plugin.settings.showTags = value; await this.plugin.saveSettings(); this.triggerUpdate({ redrawData: true }); }));
+			.onChange(async (value) => { this.plugin.settings.showTags = value; await this.plugin.saveSettings(); this.triggerUpdate({ redrawData: true, useCache: true }); }));
 		new Setting(containerEl).setName('Show attachments').addToggle(toggle => toggle.setValue(this.plugin.settings.showAttachments)
-			.onChange(async (value) => { this.plugin.settings.showAttachments = value; await this.plugin.saveSettings(); this.triggerUpdate({ redrawData: true }); }));
+			.onChange(async (value) => { this.plugin.settings.showAttachments = value; await this.plugin.saveSettings(); this.triggerUpdate({ redrawData: true, useCache: true }); }));
 		new Setting(containerEl).setName('Hide orphans').addToggle(toggle => toggle.setValue(this.plugin.settings.hideOrphans)
-			.onChange(async (value) => { this.plugin.settings.hideOrphans = value; await this.plugin.saveSettings(); this.triggerUpdate({ redrawData: true }); }));
+			.onChange(async (value) => { this.plugin.settings.hideOrphans = value; await this.plugin.saveSettings(); this.triggerUpdate({ redrawData: true, useCache: true }); }));
 
 		containerEl.createEl('h3', { text: 'Groups' });
 		containerEl.createEl('p', { text: 'Color nodes with custom rules. Use "path:", "tag:", "file:", or text match. Examples: path:folder, tag:#project, file:MyNote.md, file:*.pdf', cls: 'setting-item-description' });
@@ -147,14 +146,20 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 			.onChange(async (v) => {this.plugin.settings.zoomSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
 
 		containerEl.createEl('h3', { text: 'Forces' });
+		const forceSettingHandler = async (value: number, setting: 'centerForce' | 'repelForce' | 'linkForce') => {
+			this.plugin.settings[setting] = value;
+			await this.plugin.saveSettings();
+			this.triggerUpdate({ redrawData: true, useCache: false, reheat: true });
+		};
+
 		new Setting(containerEl).setName('Center force').setDesc('How strongly nodes are pulled toward the center.')
 			.addSlider(s => s.setLimits(0, 1, 0.01).setValue(this.plugin.settings.centerForce).setDynamicTooltip()
-				.onChange(async (v) => { this.plugin.settings.centerForce = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateForces: true }); }));
+				.onChange(async (v) => { await forceSettingHandler(v, 'centerForce'); }));
 		new Setting(containerEl).setName('Repel force').setDesc('How strongly nodes push each other apart.')
 			.addSlider(s => s.setLimits(0, 20, 0.1).setValue(this.plugin.settings.repelForce).setDynamicTooltip()
-				.onChange(async (v) => { this.plugin.settings.repelForce = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateForces: true }); }));
+				.onChange(async (v) => { await forceSettingHandler(v, 'repelForce'); }));
 		new Setting(containerEl).setName('Link force').setDesc('How strongly links pull nodes together.')
 			.addSlider(s => s.setLimits(0, 0.1, 0.001).setValue(this.plugin.settings.linkForce).setDynamicTooltip()
-				.onChange(async (v) => { this.plugin.settings.linkForce = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateForces: true }); }));
+				.onChange(async (v) => { await forceSettingHandler(v, 'linkForce'); }));
 	}
 }
