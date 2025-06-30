@@ -340,13 +340,44 @@ export class Graph3DView extends ItemView {
 			const hasNodes = newData && newData.nodes.length > 0;
 
 			if (hasNodes) {
+				// NEW: Intelligent node placement for non-reheating updates
 				if (useCache) {
+					// Build an adjacency map for efficient lookup of neighbors
+					const adjacencyMap: Map<string, string[]> = new Map();
+					newData.links.forEach(link => {
+						const sourceId = link.source as string;
+						const targetId = link.target as string;
+
+						if (!adjacencyMap.has(sourceId)) adjacencyMap.set(sourceId, []);
+						if (!adjacencyMap.has(targetId)) adjacencyMap.set(targetId, []);
+
+						adjacencyMap.get(sourceId)!.push(targetId);
+						adjacencyMap.get(targetId)!.push(sourceId);
+					});
+
 					newData.nodes.forEach(node => {
-						const pos = nodePositions.get(node.id);
-						if (pos) {
-							node.x = pos.x;
-							node.y = pos.y;
-							node.z = pos.z;
+						const cachedPos = nodePositions.get(node.id);
+						if (cachedPos) {
+							// If the node existed before, restore its exact position
+							node.x = cachedPos.x;
+							node.y = cachedPos.y;
+							node.z = cachedPos.z;
+						} else {
+							// If it's a new node, try to place it near an existing neighbor
+							const neighbors = adjacencyMap.get(node.id) || [];
+							let connectedNodePos: {x:number, y:number, z:number} | undefined;
+
+							for (const neighborId of neighbors) {
+								connectedNodePos = nodePositions.get(neighborId);
+								if (connectedNodePos) break; // Found an existing neighbor
+							}
+
+							if (connectedNodePos) {
+								// Place the new node close to its neighbor, with a small random offset
+								node.x = connectedNodePos.x + (Math.random() - 0.5) * 5;
+								node.y = connectedNodePos.y + (Math.random() - 0.5) * 5;
+								node.z = connectedNodePos.z + (Math.random() - 0.5) * 5;
+							}
 						}
 					});
 				}
@@ -361,7 +392,7 @@ export class Graph3DView extends ItemView {
 				this.updateControls();
 
 				if (isFirstLoad || reheat) {
-					// Reset simulation "energy" before reheating
+					// Reset simulation "energy" before reheating to ensure stability
 					this.graph.d3AlphaDecay(0.0228);
 					this.graph.d3VelocityDecay(0.4);
 					this.graph.d3ReheatSimulation();
