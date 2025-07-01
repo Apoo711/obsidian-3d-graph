@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+
 export interface GraphGroup {
 	query: string;
 	color: string;
