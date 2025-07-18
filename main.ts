@@ -11,11 +11,11 @@ export default class Graph3DPlugin extends Plugin {
 		await this.loadSettings();
 		this.registerView(VIEW_TYPE_3D_GRAPH, (leaf) => new Graph3DView(leaf, this));
 		this.addSettingTab(new Graph3DSettingsTab(this.app, this));
-		this.addRibbonIcon("network", "Open 3D Graph", () => this.activateView());
+		this.addRibbonIcon("network", "Open 3d graph", () => this.activateView());
 
 		this.addCommand({
 			id: 'open-3d-graph-view',
-			name: 'Open 3D Graph',
+			name: 'Open 3d graph',
 			callback: () => {
 				this.activateView();
 			}
