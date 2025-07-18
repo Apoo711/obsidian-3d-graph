@@ -6,6 +6,17 @@ A plugin for Obsidian that provides a highly customizable 3D, force-directed gra
 
 ![img.png](assets/hero.png)
 
+## Why Choose This 3D Graph?
+While other 3D graph plugins exist, this one is built to offer the most **interactive and deeply customizable** experience for exploring your vault.
+
+- **Unparalleled Customization**: Go beyond the basics with granular control over your graph's appearance and physics. Independently customize the shape, size, and color for notes, attachments, and tags. Fine-tune the physics simulation with live-updating sliders to get the exact layout you want.
+
+- **A Truly Live Experience**: All settings—from colors and filters to physics—are applied instantly without needing to reload the view. This creates a fluid, interactive experience that lets you sculpt and analyze your graph in real-time.
+
+- **Powerful Filtering and Coloring**: Visually organize your vault with powerful tools. Use `path:`, `tag:`, and `file:` queries to create color-coded groups, just like in Obsidian's native graph. A powerful search bar also helps you find specific notes and focus on their connections.
+
+- **Modern & Maintained**: Built on a robust and performant tech stack, this plugin is actively maintained to ensure compatibility and introduce new features.
+
 ## Features
 
 * **Interactive 3D Canvas:** Pan, zoom, and rotate around your notes to explore their relationships from any angle.
@@ -18,13 +29,13 @@ A plugin for Obsidian that provides a highly customizable 3D, force-directed gra
 
 * **Advanced Filtering & Search:**
 
-	* **Search:** A powerful search bar to find specific notes and their neighbors.
+	* **Live Search:** A powerful search bar to find specific notes and their neighbors.
 
 	* **Live Filters:** Toggle visibility for attachments, tags, and orphan nodes on the fly.
 
 * **Deep Customization:**
 
-	* **Color Groups:** Create rules to color-code your graph based on file paths (`path:`) or tags (`tag:`), just like the native graph.
+	* **Color Groups:** Create rules to color-code your graph based on file paths (`path:`), tags (`tag:`), file names (`file:`), or content.
 
 	* **Node Appearance:** Independently control the shape, size, and color for notes, attachments, and tags.
 
@@ -33,10 +44,11 @@ A plugin for Obsidian that provides a highly customizable 3D, force-directed gra
 * **Stable & Performant:**
 
 	* All settings update the graph instantly without requiring a reload.
+	* Intelligently caches node positions for a smooth experience when updating data.
 
 ## How to Install
 
-1. Download `main.js` and `manifest.json` from the latest [release](https://github.com/Apoo711/obsidian-3d-graph/releases).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the latest [release](https://github.com/Apoo711/obsidian-3d-graph/releases).
 
 2. In Obsidian, open `Settings` > `Community plugins`.
 
@@ -44,13 +56,13 @@ A plugin for Obsidian that provides a highly customizable 3D, force-directed gra
 
 4. Open your vault's plugin folder by clicking the small folder icon next to "Installed plugins".
 
-5. Create a new folder named `3d-graph-plugin`.
+5. Create a new folder named `new-3d-graph`.
 
-6. Copy the downloaded `main.js` and `manifest.json` files into this new folder.
+6. Copy the downloaded `main.js`, `manifest.json`, and `styles.css` files into this new folder.
 
 7. Go back to Obsidian's "Community plugins" settings and click the refresh button.
 
-8. Enable "3D Graph Plugin".
+8. Enable "New 3D Graph".
 
 Once enabled, you can open the 3D Graph from the ribbon icon on the left sidebar or by using the Command Palette (`Ctrl/Cmd + P` and typing "Open 3D Graph").
 
@@ -62,9 +74,9 @@ You can configure the 3D Graph by going to `Settings` > `3D Graph Plugin`. All s
 
 * **Filters:** Toggle visibility for `tags`, `attachments`, and `orphans`.
 
-* **Color Groups:** Set custom colors for nodes using `path:` and `tag:` queries.
+* **Color Groups:** Set custom colors for nodes using `path:`, `tag:`, and `file:` queries.
 
-* **Display:** Customize the shape, size, and color for every element in the graph.
+* **Display & Appearance:** Customize the shape, size, and color for every element in the graph.
 
 * **Forces:** Adjust the physics simulation to change the graph's layout and feel.
 
