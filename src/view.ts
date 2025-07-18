@@ -40,17 +40,14 @@ export class Graph3DView extends ItemView {
 	}
 
 	getViewType() { return VIEW_TYPE_3D_GRAPH; }
-	getDisplayText() { return "3D Graph"; }
+	getDisplayText() { return "3d graph"; }
 
 	async onOpen() {
 		const rootContainer = this.contentEl;
 		rootContainer.empty();
-		rootContainer.style.position = 'relative';
+		rootContainer.addClass('graph-3d-view-content');
 
-		const viewWrapper = rootContainer.createEl('div');
-		viewWrapper.style.position = 'relative';
-		viewWrapper.style.width = '100%';
-		viewWrapper.style.height = '100%';
+		const viewWrapper = rootContainer.createEl('div', { cls: 'graph-3d-view-wrapper' });
 
 		this.graphContainer = viewWrapper.createEl('div', { cls: 'graph-3d-container' });
 		this.messageEl = viewWrapper.createEl('div', { cls: 'graph-3d-message' });
@@ -231,21 +228,21 @@ export class Graph3DView extends ItemView {
 					await this.plugin.saveSettings();
 				}));
 
-		new Setting(container).setName('Rotation Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.rotateSpeed).setDynamicTooltip()
+		new Setting(container).setName('Rotation speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.rotateSpeed).setDynamicTooltip()
 			.onChange(async (v) => {
 				this.settings.rotateSpeed = v;
 				await this.plugin.saveSettings();
 				this.updateControls();
 			}));
 
-		new Setting(container).setName('Pan Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.panSpeed).setDynamicTooltip()
+		new Setting(container).setName('Pan speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.panSpeed).setDynamicTooltip()
 			.onChange(async (v) => {
 				this.settings.panSpeed = v;
 				await this.plugin.saveSettings();
 				this.updateControls();
 			}));
 
-		new Setting(container).setName('Zoom Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.zoomSpeed).setDynamicTooltip()
+		new Setting(container).setName('Zoom speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.zoomSpeed).setDynamicTooltip()
 			.onChange(async (v) => {
 				this.settings.zoomSpeed = v;
 				await this.plugin.saveSettings();
@@ -379,7 +376,7 @@ export class Graph3DView extends ItemView {
 				}
 
 				this.graph.pauseAnimation();
-				this.messageEl.style.display = 'none';
+				this.messageEl.removeClass('is-visible');
 				this.graph.graphData(newData);
 
 				this.updateForces();
@@ -418,7 +415,7 @@ export class Graph3DView extends ItemView {
 					: this.settings.backgroundColor;
 				this.graph.backgroundColor(bgColor);
 				this.messageEl.setText("No search results found.");
-				this.messageEl.style.display = 'block';
+				this.messageEl.addClass('is-visible');
 				this.graph.pauseAnimation();
 			}
 		} catch (error) {
