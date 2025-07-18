@@ -33,9 +33,8 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
-		containerEl.createEl('h2', { text: '3D Graph Settings' });
 
-		containerEl.createEl('h3', { text: 'Search' });
+		new Setting(containerEl).setName('Search').setHeading();
 		new Setting(containerEl).setName('Search term').setDesc('Only show notes containing this text.')
 			.addText(text => text.setPlaceholder('Enter search term...')
 				.setValue(this.plugin.settings.searchQuery)
@@ -56,7 +55,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 					}
 				}));
 
-		containerEl.createEl('h3', { text: 'Filters' });
+		new Setting(containerEl).setName('Filters').setHeading();
 		new Setting(containerEl).setName('Show tags').addToggle(toggle => toggle.setValue(this.plugin.settings.showTags)
 			.onChange(async (value) => { this.plugin.settings.showTags = value; await this.plugin.saveSettings(); this.triggerUpdate({ redrawData: true, useCache: true }); }));
 		new Setting(containerEl).setName('Show attachments').addToggle(toggle => toggle.setValue(this.plugin.settings.showAttachments)
@@ -64,7 +63,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 		new Setting(containerEl).setName('Hide orphans').addToggle(toggle => toggle.setValue(this.plugin.settings.hideOrphans)
 			.onChange(async (value) => { this.plugin.settings.hideOrphans = value; await this.plugin.saveSettings(); this.triggerUpdate({ redrawData: true, useCache: true }); }));
 
-		containerEl.createEl('h3', { text: 'Groups' });
+		new Setting(containerEl).setName('Groups').setHeading();
 		containerEl.createEl('p', { text: 'Color nodes with custom rules. Use "path:", "tag:", "file:", or text match. Examples: path:folder, tag:#project, file:MyNote.md, file:*.pdf', cls: 'setting-item-description' });
 
 		this.plugin.settings.groups.forEach((group, index) => {
@@ -104,7 +103,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 					this.display();
 				}));
 
-		containerEl.createEl('h3', { text: 'Display' });
+		new Setting(containerEl).setName('Display').setHeading();
 		new Setting(containerEl).setName('Use theme colors').setDesc('Automatically use your current Obsidian theme colors for the graph.')
 			.addToggle(toggle => toggle.setValue(this.plugin.settings.useThemeColors)
 				.onChange(async (value) => {this.plugin.settings.useThemeColors = value; await this.plugin.saveSettings(); this.display(); this.triggerUpdate({ updateDisplay: true }); }));
@@ -118,7 +117,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 			new Setting(containerEl).setName('Background color').addColorPicker(c => c.setValue(this.plugin.settings.backgroundColor).onChange(async (v) => { this.plugin.settings.backgroundColor = v; await this.plugin.saveSettings(); this.triggerUpdate({}); }));
 		}
 
-		containerEl.createEl('h3', { text: 'Appearance' });
+		new Setting(containerEl).setName('Appearance').setHeading();
 		new Setting(containerEl).setName('Node shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.plugin.settings.nodeShape)
 			.onChange(async(value: NodeShape) => {this.plugin.settings.nodeShape = value; await this.plugin.saveSettings(); this.triggerUpdate({updateDisplay: true})}));
 		new Setting(containerEl).setName('Tag shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.plugin.settings.tagShape)
@@ -134,18 +133,18 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 		new Setting(containerEl).setName('Link thickness').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.linkThickness).setDynamicTooltip()
 			.onChange(async (v) => { this.plugin.settings.linkThickness = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
 
-		containerEl.createEl('h3', { text: 'Interaction' });
+		new Setting(containerEl).setName('Interaction').setHeading();
 		new Setting(containerEl).setName("Zoom on click").setDesc("Automatically zoom in on a node when it's clicked.")
 			.addToggle(toggle => toggle.setValue(this.plugin.settings.zoomOnClick)
 				.onChange(async (value) => {this.plugin.settings.zoomOnClick = value; await this.plugin.saveSettings();}));
-		new Setting(containerEl).setName('Rotation Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.rotateSpeed).setDynamicTooltip()
+		new Setting(containerEl).setName('Rotation speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.rotateSpeed).setDynamicTooltip()
 			.onChange(async (v) => {this.plugin.settings.rotateSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
-		new Setting(containerEl).setName('Pan Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.panSpeed).setDynamicTooltip()
+		new Setting(containerEl).setName('Pan speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.panSpeed).setDynamicTooltip()
 			.onChange(async (v) => {this.plugin.settings.panSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
-		new Setting(containerEl).setName('Zoom Speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.zoomSpeed).setDynamicTooltip()
+		new Setting(containerEl).setName('Zoom speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.zoomSpeed).setDynamicTooltip()
 			.onChange(async (v) => {this.plugin.settings.zoomSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
 
-		containerEl.createEl('h3', { text: 'Forces' });
+		new Setting(containerEl).setName('Forces').setHeading();
 		const forceSettingHandler = async (value: number, setting: 'centerForce' | 'repelForce' | 'linkForce') => {
 			this.plugin.settings[setting] = value;
 			await this.plugin.saveSettings();
