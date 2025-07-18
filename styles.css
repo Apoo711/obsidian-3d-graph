@@ -1,3 +1,14 @@
+.graph-3d-view-content {
+	position: relative;
+	height: 100%;
+}
+
+.graph-3d-view-wrapper {
+	position: relative;
+	width: 100%;
+	height: 100%;
+}
+
 .graph-3d-container {
 	position: relative;
 	width: 100%;
@@ -13,6 +24,10 @@
 	display: none;
 	z-index: 10;
 	font-size: var(--font-ui-large);
+}
+
+.graph-3d-message.is-visible {
+	display: block;
 }
 
 .graph-3d-controls-container {
