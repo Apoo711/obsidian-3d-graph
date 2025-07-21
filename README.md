@@ -1,10 +1,11 @@
 # 3D Graph for Obsidian
+![Hero Preview](assets/hero.png)
 
 A plugin for Obsidian that provides a highly customizable 3D, force-directed graph view of your vault. This offers an alternative, immersive way to visualize and explore the connections between your notes.
 
 *Check out my blog post [here](https://aryan-gupta.is-a.dev/blog/2025/3d-graph-plugin/)*
 
-![img.png](assets/hero.png)
+![Preview Video](assets/preview.mp4)
 
 ## Why Choose This 3D Graph?
 While other 3D graph plugins exist, this one is built to offer the most **interactive and deeply customizable** experience for exploring your vault.
