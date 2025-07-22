@@ -5,7 +5,7 @@ A plugin for Obsidian that provides a highly customizable 3D, force-directed gra
 
 *Check out my blog post [here](https://aryan-gupta.is-a.dev/blog/2025/3d-graph-plugin/)*
 
-![Preview Video](https://github.com/Apoo711/obsidian-3d-graph/blob/main/assets/preview.mp4)
+![Preview Video](https://github.com/user-attachments/assets/0f5e5168-fa5c-42b6-8f5b-6fd22270836c)
 
 ## Why Choose This 3D Graph?
 While other 3D graph plugins exist, this one is built to offer the most **interactive and deeply customizable** experience for exploring your vault.
