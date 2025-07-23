@@ -55,21 +55,29 @@ While other 3D graph plugins exist, this one is built to offer the most **intera
 
 ## How to Install
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the latest [release](https://github.com/Apoo711/obsidian-3d-graph/releases).
+### Recommended Method (from Community Plugins)
+1. Open **Settings > Community plugins**.
 
-2. In Obsidian, open `Settings` > `Community plugins`.
+2. Make sure "Restricted mode" is turned **off**.
 
-3. Make sure "Restricted mode" is turned off.
+3. Click **Browse** and search for "New 3D Graph".
 
-4. Open your vault's plugin folder by clicking the small folder icon next to "Installed plugins".
+4. Click **Install**.
 
-5. Create a new folder named `new-3d-graph`.
+5. Once installed, close the community plugins window and **Enable** the plugin.
 
-6. Copy the downloaded `main.js`, `manifest.json`, and `styles.css` files into this new folder.
+### Beta Installation (using BRAT)
+For those who want the latest beta features:
 
-7. Go back to Obsidian's "Community plugins" settings and click the refresh button.
+1. Install the **BRAT** plugin from the Community Plugins browser.
 
-8. Enable "New 3D Graph".
+2. Open the BRAT settings (`Settings` > `BRAT`).
+
+3. In the "Beta Plugin List" section, click **Add Beta plugin**.
+
+4. Use the repository path: `Apoo711/obsidian-3d-graph`
+
+5. Enable the "3D Graph" plugin in the Community Plugins tab.
 
 Once enabled, you can open the 3D Graph from the ribbon icon on the left sidebar or by using the Command Palette (`Ctrl/Cmd + P` and typing "Open 3D Graph").
 
