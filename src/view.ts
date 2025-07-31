@@ -55,18 +55,23 @@ export class Graph3DView extends ItemView {
 		this.settings = plugin.settings;
 	}
 
-	getViewType() { return VIEW_TYPE_3D_GRAPH; }
-	getDisplayText() { return "3d graph"; }
+	getViewType() {
+		return VIEW_TYPE_3D_GRAPH;
+	}
+
+	getDisplayText() {
+		return "3d graph";
+	}
 
 	async onOpen() {
 		const rootContainer = this.contentEl;
 		rootContainer.empty();
 		rootContainer.addClass('graph-3d-view-content');
 
-		const viewWrapper = rootContainer.createEl('div', { cls: 'graph-3d-view-wrapper' });
+		const viewWrapper = rootContainer.createEl('div', {cls: 'graph-3d-view-wrapper'});
 
-		this.graphContainer = viewWrapper.createEl('div', { cls: 'graph-3d-container' });
-		this.messageEl = viewWrapper.createEl('div', { cls: 'graph-3d-message' });
+		this.graphContainer = viewWrapper.createEl('div', {cls: 'graph-3d-container'});
+		this.messageEl = viewWrapper.createEl('div', {cls: 'graph-3d-message'});
 
 		this.addLocalControls();
 		this.initializeGraph();
@@ -81,11 +86,11 @@ export class Graph3DView extends ItemView {
 	}
 
 	private addLocalControls() {
-		const controlsContainer = this.contentEl.createEl('div', { cls: 'graph-3d-controls-container' });
-		this.settingsToggleButton = controlsContainer.createEl('div', { cls: 'graph-3d-settings-toggle' });
+		const controlsContainer = this.contentEl.createEl('div', {cls: 'graph-3d-controls-container'});
+		this.settingsToggleButton = controlsContainer.createEl('div', {cls: 'graph-3d-settings-toggle'});
 		setIcon(this.settingsToggleButton, 'settings');
 		this.settingsToggleButton.setAttribute('aria-label', 'Graph settings');
-		this.settingsPanel = controlsContainer.createEl('div', { cls: 'graph-3d-settings-panel' });
+		this.settingsPanel = controlsContainer.createEl('div', {cls: 'graph-3d-settings-panel'});
 		this.settingsToggleButton.addEventListener('click', () => {
 			this.settingsPanel.classList.toggle('is-open');
 		});
@@ -116,7 +121,7 @@ export class Graph3DView extends ItemView {
 				.onChange(debounce(async (value) => {
 					this.settings.searchQuery = value.trim();
 					await this.plugin.saveSettings();
-					this.updateData({ useCache: true, reheat: false });
+					this.updateData({useCache: true, reheat: false});
 				}, 500, true)));
 
 		new Setting(container)
@@ -127,7 +132,7 @@ export class Graph3DView extends ItemView {
 					this.settings.showNeighboringNodes = value;
 					await this.plugin.saveSettings();
 					if (this.settings.searchQuery) {
-						this.updateData({ useCache: true, reheat: false });
+						this.updateData({useCache: true, reheat: false});
 					}
 				}));
 	}
@@ -140,7 +145,7 @@ export class Graph3DView extends ItemView {
 			.onChange(async (value) => {
 				this.settings.showTags = value;
 				await this.plugin.saveSettings();
-				this.updateData({ useCache: true, reheat: false });
+				this.updateData({useCache: true, reheat: false});
 			}));
 
 		new Setting(container).setName('Show attachments').addToggle(toggle => toggle
@@ -148,7 +153,7 @@ export class Graph3DView extends ItemView {
 			.onChange(async (value) => {
 				this.settings.showAttachments = value;
 				await this.plugin.saveSettings();
-				this.updateData({ useCache: true, reheat: false });
+				this.updateData({useCache: true, reheat: false});
 			}));
 
 		new Setting(container).setName('Hide orphans').addToggle(toggle => toggle
@@ -156,7 +161,7 @@ export class Graph3DView extends ItemView {
 			.onChange(async (value) => {
 				this.settings.hideOrphans = value;
 				await this.plugin.saveSettings();
-				this.updateData({ useCache: true, reheat: false });
+				this.updateData({useCache: true, reheat: false});
 			}));
 	}
 
@@ -201,7 +206,7 @@ export class Graph3DView extends ItemView {
 				.addButton(button => button
 					.setButtonText('Add new group')
 					.onClick(async () => {
-						this.settings.groups.push({ query: '', color: '#ffffff' });
+						this.settings.groups.push({query: '', color: '#ffffff'});
 						await this.plugin.saveSettings();
 						render();
 					}));
@@ -219,20 +224,41 @@ export class Graph3DView extends ItemView {
 		}
 
 		new Setting(container).setName('Node size').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.nodeSize).setDynamicTooltip()
-			.onChange(async (v) => { this.settings.nodeSize = v; await updateDisplayAndColors(); }));
+			.onChange(async (v) => {
+				this.settings.nodeSize = v;
+				await updateDisplayAndColors();
+			}));
 		new Setting(container).setName('Tag node size').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.tagNodeSize).setDynamicTooltip()
-			.onChange(async (v) => { this.settings.tagNodeSize = v; await updateDisplayAndColors(); }));
+			.onChange(async (v) => {
+				this.settings.tagNodeSize = v;
+				await updateDisplayAndColors();
+			}));
 		new Setting(container).setName('Attachment node size').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.attachmentNodeSize).setDynamicTooltip()
-			.onChange(async (v) => { this.settings.attachmentNodeSize = v; await updateDisplayAndColors(); }));
+			.onChange(async (v) => {
+				this.settings.attachmentNodeSize = v;
+				await updateDisplayAndColors();
+			}));
 		new Setting(container).setName('Link thickness').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.linkThickness).setDynamicTooltip()
-			.onChange(async (v) => { this.settings.linkThickness = v; await updateDisplayAndColors(); }));
+			.onChange(async (v) => {
+				this.settings.linkThickness = v;
+				await updateDisplayAndColors();
+			}));
 
 		new Setting(container).setName('Node shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.settings.nodeShape)
-			.onChange(async(value: NodeShape) => {this.settings.nodeShape = value; await updateDisplayAndColors()}));
+			.onChange(async (value: NodeShape) => {
+				this.settings.nodeShape = value;
+				await updateDisplayAndColors()
+			}));
 		new Setting(container).setName('Tag shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.settings.tagShape)
-			.onChange(async(value: NodeShape) => {this.settings.tagShape = value; await updateDisplayAndColors()}));
+			.onChange(async (value: NodeShape) => {
+				this.settings.tagShape = value;
+				await updateDisplayAndColors()
+			}));
 		new Setting(container).setName('Attachment shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.settings.attachmentShape)
-			.onChange(async(value: NodeShape) => {this.settings.attachmentShape = value; await updateDisplayAndColors()}));
+			.onChange(async (value: NodeShape) => {
+				this.settings.attachmentShape = value;
+				await updateDisplayAndColors()
+			}));
 	}
 
 	private renderLabelSettings(container: HTMLElement) {
@@ -246,7 +272,7 @@ export class Graph3DView extends ItemView {
 					await this.plugin.saveSettings();
 
 					if (!value) {
-						this.graph.graphData().nodes.forEach((node: GraphNode) => this.cleanupNode(node, { cleanMesh: false }));
+						this.graph.graphData().nodes.forEach((node: GraphNode) => this.cleanupNode(node, {cleanMesh: false}));
 					}
 					this.updateDisplay();
 					this.updateColors();
@@ -306,7 +332,7 @@ export class Graph3DView extends ItemView {
 
 		const forceChangeHandler = async () => {
 			await this.plugin.saveSettings();
-			this.updateData({ useCache: false, reheat: true });
+			this.updateData({useCache: false, reheat: true});
 		};
 
 		new Setting(container)
@@ -364,18 +390,20 @@ export class Graph3DView extends ItemView {
 					}
 				});
 
-			this.graph.graphData({ nodes: [], links: [] });
+			this.graph.graphData({nodes: [], links: []});
 
 			this.initializeForces();
 			this.graph.pauseAnimation();
 			this.isGraphInitialized = true;
 
-			setTimeout(() => { this.updateData({ isFirstLoad: true }); }, 100);
+			setTimeout(() => {
+				this.updateData({isFirstLoad: true});
+			}, 100);
 		});
 	}
 
 	public async updateData(options: { useCache?: boolean; reheat?: boolean; isFirstLoad?: boolean } = {}) {
-		const { useCache = true, reheat = false, isFirstLoad = false } = options;
+		const {useCache = true, reheat = false, isFirstLoad = false} = options;
 
 		if (!this.isGraphInitialized || this.isUpdating) {
 			return;
@@ -387,7 +415,7 @@ export class Graph3DView extends ItemView {
 			if (useCache && this.graph.graphData().nodes.length > 0) {
 				this.graph.graphData().nodes.forEach((node: GraphNode) => {
 					if (node.id && node.x !== undefined && node.y !== undefined && node.z !== undefined) {
-						nodePositions.set(node.id, { x: node.x, y: node.y, z: node.z });
+						nodePositions.set(node.id, {x: node.x, y: node.y, z: node.z});
 					}
 				});
 			}
@@ -424,7 +452,7 @@ export class Graph3DView extends ItemView {
 							node.z = cachedPos.z;
 						} else {
 							const neighbors = adjacencyMap.get(node.id) || [];
-							let connectedNodePos: {x:number, y:number, z:number} | undefined;
+							let connectedNodePos: { x: number, y: number, z: number } | undefined;
 
 							for (const neighborId of neighbors) {
 								connectedNodePos = nodePositions.get(neighborId);
@@ -467,7 +495,7 @@ export class Graph3DView extends ItemView {
 				const Graph = (ForceGraph3D as any).default || ForceGraph3D;
 				this.graph = Graph()(this.graphContainer)
 					.onNodeClick((node: GraphNode) => this.handleNodeClick(node))
-					.graphData({ nodes: [], links: [] });
+					.graphData({nodes: [], links: []});
 
 				this.initializeForces();
 
@@ -552,7 +580,7 @@ export class Graph3DView extends ItemView {
 	}
 
 	private getNodeColor(node: GraphNode): string {
-		const { useThemeColors, colorHighlight, colorNode, colorTag, colorAttachment, groups } = this.settings;
+		const {useThemeColors, colorHighlight, colorNode, colorTag, colorAttachment, groups} = this.settings;
 
 		if (this.highlightedNodes.has(node.id)) {
 			return useThemeColors ? this.getCssColor('--graph-node-focused', colorHighlight) : colorHighlight;
@@ -621,19 +649,34 @@ export class Graph3DView extends ItemView {
 		let shape: NodeShape;
 		let size: number;
 		switch (node.type) {
-			case NodeType.Tag: shape = this.settings.tagShape; size = this.settings.tagNodeSize; break;
-			case NodeType.Attachment: shape = this.settings.attachmentShape; size = this.settings.attachmentNodeSize; break;
-			default: shape = this.settings.nodeShape; size = this.settings.nodeSize;
+			case NodeType.Tag:
+				shape = this.settings.tagShape;
+				size = this.settings.tagNodeSize;
+				break;
+			case NodeType.Attachment:
+				shape = this.settings.attachmentShape;
+				size = this.settings.attachmentNodeSize;
+				break;
+			default:
+				shape = this.settings.nodeShape;
+				size = this.settings.nodeSize;
 		}
 
 		let geometry: THREE.BufferGeometry;
 		const s = size * 1.5;
 
 		switch (shape) {
-			case NodeShape.Cube: geometry = new THREE.BoxGeometry(s, s, s); break;
-			case NodeShape.Pyramid: geometry = new THREE.ConeGeometry(s / 1.5, s, 4); break;
-			case NodeShape.Tetrahedron: geometry = new THREE.TetrahedronGeometry(s / 1.2); break;
-			default: geometry = new THREE.SphereGeometry(s / 2);
+			case NodeShape.Cube:
+				geometry = new THREE.BoxGeometry(s, s, s);
+				break;
+			case NodeShape.Pyramid:
+				geometry = new THREE.ConeGeometry(s / 1.5, s, 4);
+				break;
+			case NodeShape.Tetrahedron:
+				geometry = new THREE.TetrahedronGeometry(s / 1.2);
+				break;
+			default:
+				geometry = new THREE.SphereGeometry(s / 2);
 		}
 
 		const color = this.getNodeColor(node);
@@ -669,7 +712,7 @@ export class Graph3DView extends ItemView {
 	public updateForces() {
 		if (!this.isGraphInitialized) return;
 
-		const { centerForce, repelForce, linkForce } = this.settings;
+		const {centerForce, repelForce, linkForce} = this.settings;
 
 		if (this.centerForce) {
 			this.centerForce.strength(centerForce);
@@ -684,7 +727,7 @@ export class Graph3DView extends ItemView {
 
 	public updateControls() {
 		if (!this.isGraphInitialized) return;
-		const { rotateSpeed, panSpeed, zoomSpeed } = this.settings;
+		const {rotateSpeed, panSpeed, zoomSpeed} = this.settings;
 		const controls = this.graph.controls();
 		if (controls) {
 			controls.rotateSpeed = rotateSpeed;
@@ -752,11 +795,13 @@ export class Graph3DView extends ItemView {
 		if (!node) return;
 
 		if (this.clickTimeout) {
-			clearTimeout(this.clickTimeout); this.clickTimeout = null;
+			clearTimeout(this.clickTimeout);
+			this.clickTimeout = null;
 			this.handleNodeDoubleClick(node);
 		} else {
 			this.clickTimeout = setTimeout(() => {
-				this.handleNodeSingleClick(node); this.clickTimeout = null;
+				this.handleNodeSingleClick(node);
+				this.clickTimeout = null;
 			}, this.CLICK_DELAY);
 		}
 	}
@@ -821,8 +866,11 @@ export class Graph3DView extends ItemView {
 		this.updateColors();
 	}
 
-	private async processVaultData(): Promise<{ nodes: GraphNode[], links: { source: string, target: string }[] } | null> {
-		const { showAttachments, hideOrphans, showTags, searchQuery, showNeighboringNodes } = this.settings;
+	private async processVaultData(): Promise<{
+		nodes: GraphNode[],
+		links: { source: string, target: string }[]
+	} | null> {
+		const {showAttachments, hideOrphans, showTags, searchQuery, showNeighboringNodes} = this.settings;
 		const allFiles = this.app.vault.getFiles();
 		const resolvedLinks = this.app.metadataCache.resolvedLinks;
 		if (!resolvedLinks) return null;
@@ -839,14 +887,14 @@ export class Graph3DView extends ItemView {
 				content = await this.app.vault.cachedRead(file);
 			}
 
-			allNodesMap.set(file.path, { id: file.path, name: file.basename, filename: file.name, type, tags, content });
+			allNodesMap.set(file.path, {id: file.path, name: file.basename, filename: file.name, type, tags, content});
 		}
 
 
 		const allLinks: { source: string, target: string }[] = [];
 		for (const sourcePath in resolvedLinks) {
 			for (const targetPath in resolvedLinks[sourcePath]) {
-				allLinks.push({ source: sourcePath, target: targetPath });
+				allLinks.push({source: sourcePath, target: targetPath});
 			}
 		}
 
@@ -857,9 +905,9 @@ export class Graph3DView extends ItemView {
 					node.tags.forEach(tagName => {
 						const tagId = `tag:${tagName}`;
 						if (!allTags.has(tagName)) {
-							allTags.set(tagName, { id: tagId, name: `#${tagName}`, type: NodeType.Tag });
+							allTags.set(tagName, {id: tagId, name: `#${tagName}`, type: NodeType.Tag});
 						}
-						allLinks.push({ source: node.id, target: tagId });
+						allLinks.push({source: node.id, target: tagId});
 					});
 				}
 			});
@@ -923,10 +971,10 @@ export class Graph3DView extends ItemView {
 			linksToShow = linksToShow.filter(l => visibleNodeIds.has(l.source) && visibleNodeIds.has(l.target));
 		}
 
-		return { nodes: nodesToShow, links: linksToShow };
+		return {nodes: nodesToShow, links: linksToShow};
 	}
 
-	private cleanupNode(node: GraphNode, options: { cleanMesh?: boolean } = { cleanMesh: true }) {
+	private cleanupNode(node: GraphNode, options: { cleanMesh?: boolean } = {cleanMesh: true}) {
 		if (options.cleanMesh) {
 			const mesh = this.nodeMeshes.get(node);
 			if (mesh) {
@@ -965,3 +1013,5 @@ export class Graph3DView extends ItemView {
 		if (this.messageEl) {
 			this.messageEl.remove();
 		}
+	}
+}
