@@ -146,6 +146,10 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 		new Setting(containerEl).setName('Label text size').addSlider(s => s.setLimits(1, 10, 0.5).setValue(this.plugin.settings.labelTextSize).setDynamicTooltip()
 			.onChange(async (v) => { this.plugin.settings.labelTextSize = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
 		new Setting(containerEl).setName('Label text color').addColorPicker(c => c.setValue(this.plugin.settings.labelTextColor).onChange(async (v) => { this.plugin.settings.labelTextColor = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
+		// Added for Phase 3
+		new Setting(containerEl).setName('Prevent label occlusion').setDesc('Hides labels that are behind other nodes. Can impact performance on large graphs.')
+			.addToggle(toggle => toggle.setValue(this.plugin.settings.labelOcclusion)
+				.onChange(async (value) => { this.plugin.settings.labelOcclusion = value; await this.plugin.saveSettings(); }));
 
 
 		new Setting(containerEl).setName('Interaction').setHeading();

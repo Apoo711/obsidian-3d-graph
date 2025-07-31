@@ -39,6 +39,7 @@ export interface Graph3DPluginSettings {
 	labelFadeThreshold: number;
 	labelTextSize: number;
 	labelTextColor: string;
+	labelOcclusion: boolean; // Added for Phase 3
 	// Interaction
 	zoomOnClick: boolean;
 	rotateSpeed: number;
@@ -82,6 +83,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	labelFadeThreshold: 0.8,
 	labelTextSize: 2.5,
 	labelTextColor: '#ffffff',
+	labelOcclusion: false, // Added for Phase 3
 	// Interaction
 	zoomOnClick: true,
 	rotateSpeed: 1.0,

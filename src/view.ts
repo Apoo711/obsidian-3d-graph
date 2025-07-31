@@ -13,6 +13,7 @@ export class Graph3DView extends ItemView {
 	private plugin: Graph3DPlugin;
 	private settings: Graph3DPluginSettings;
 	private resizeObserver: ResizeObserver;
+	private raycaster = new THREE.Raycaster(); // Added for Phase 3
 
 	private highlightedNodes = new Set<string>();
 	private highlightedLinks = new Set<object>();
@@ -83,6 +84,7 @@ export class Graph3DView extends ItemView {
 		this.renderFilterSettings(this.settingsPanel);
 		this.renderGroupSettings(this.settingsPanel);
 		this.renderAppearanceSettings(this.settingsPanel);
+		this.renderLabelSettings(this.settingsPanel); // Added this line
 		this.renderInteractionSettings(this.settingsPanel);
 		this.renderForceSettings(this.settingsPanel);
 	}
@@ -217,6 +219,37 @@ export class Graph3DView extends ItemView {
 			.onChange(async(value: NodeShape) => {this.settings.tagShape = value; await updateDisplayAndColors()}));
 		new Setting(container).setName('Attachment shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.settings.attachmentShape)
 			.onChange(async(value: NodeShape) => {this.settings.attachmentShape = value; await updateDisplayAndColors()}));
+	}
+
+	// New function for label settings
+	private renderLabelSettings(container: HTMLElement) {
+		new Setting(container).setHeading().setName('Labels');
+
+		new Setting(container)
+			.setName('Show node labels')
+			.addToggle(toggle => toggle.setValue(this.settings.showNodeLabels)
+				.onChange(async (value) => {
+					this.settings.showNodeLabels = value;
+					await this.plugin.saveSettings();
+					this.updateDisplay();
+					this.updateColors();
+				}));
+
+		new Setting(container)
+			.setName('Label distance')
+			.addSlider(s => s.setLimits(50, 500, 10).setValue(this.settings.labelDistance).setDynamicTooltip()
+				.onChange(async (v) => {
+					this.settings.labelDistance = v;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(container)
+			.setName('Prevent label occlusion')
+			.addToggle(toggle => toggle.setValue(this.settings.labelOcclusion)
+				.onChange(async (value) => {
+					this.settings.labelOcclusion = value;
+					await this.plugin.saveSettings();
+				}));
 	}
 
 	private renderInteractionSettings(container: HTMLElement) {
@@ -595,7 +628,7 @@ export class Graph3DView extends ItemView {
 		}
 
 		const mesh = new THREE.Mesh(geometry, material);
-		(node as any).__mesh = mesh; // Cache mesh for color updates
+		(node as any).__mesh = mesh; // Cache mesh for color updates and raycasting
 		group.add(mesh);
 
 		// --- Create Text Label ---
@@ -639,12 +672,17 @@ export class Graph3DView extends ItemView {
 	}
 
 	private updateLabels() {
-		if (!this.isGraphInitialized) return;
+		if (!this.isGraphInitialized || !this.settings.showNodeLabels) return;
 
 		const camera = this.graph.camera();
 		const nodes = this.graph.graphData().nodes;
 
 		if (!nodes || !camera) return;
+
+		// Collect all node meshes for raycasting if occlusion is enabled
+		const occluders = this.settings.labelOcclusion
+			? nodes.map((n: any) => n.__mesh).filter(Boolean)
+			: [];
 
 		nodes.forEach((node: any) => {
 			const sprite = node.__sprite;
@@ -669,6 +707,19 @@ export class Graph3DView extends ItemView {
 				opacity = 1;
 			} else if (distance <= visibleDistance) {
 				opacity = 1 - (distance - fadeStartDistance) / (visibleDistance - fadeStartDistance);
+			}
+
+			// Phase 3: Occlusion check
+			if (opacity > 0 && this.settings.labelOcclusion && occluders.length > 1) {
+				const direction = nodePosition.clone().sub(camera.position).normalize();
+				this.raycaster.set(camera.position, direction);
+				const intersects = this.raycaster.intersectObjects(occluders);
+
+				if (intersects.length > 0 && intersects[0].object !== node.__mesh) {
+					if (intersects[0].distance < distance) {
+						opacity = 0; // Hide label if it's occluded
+					}
+				}
 			}
 
 			sprite.material.opacity = opacity;
