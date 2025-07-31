@@ -13,7 +13,15 @@ export class Graph3DView extends ItemView {
 	private plugin: Graph3DPlugin;
 	private settings: Graph3DPluginSettings;
 	private resizeObserver: ResizeObserver;
-	private raycaster = new THREE.Raycaster(); // Added for Phase 3
+	private raycaster = new THREE.Raycaster();
+
+	// Reusable objects for performance optimization
+	private reusableNodePosition = new THREE.Vector3();
+	private reusableDirection = new THREE.Vector3();
+
+	// WeakMaps for type safety and automatic garbage collection
+	private nodeMeshes = new WeakMap<GraphNode, THREE.Mesh>();
+	private nodeSprites = new WeakMap<GraphNode, SpriteText>();
 
 	private highlightedNodes = new Set<string>();
 	private highlightedLinks = new Set<object>();
@@ -84,7 +92,7 @@ export class Graph3DView extends ItemView {
 		this.renderFilterSettings(this.settingsPanel);
 		this.renderGroupSettings(this.settingsPanel);
 		this.renderAppearanceSettings(this.settingsPanel);
-		this.renderLabelSettings(this.settingsPanel); // Added this line
+		this.renderLabelSettings(this.settingsPanel);
 		this.renderInteractionSettings(this.settingsPanel);
 		this.renderForceSettings(this.settingsPanel);
 	}
@@ -221,7 +229,6 @@ export class Graph3DView extends ItemView {
 			.onChange(async(value: NodeShape) => {this.settings.attachmentShape = value; await updateDisplayAndColors()}));
 	}
 
-	// New function for label settings
 	private renderLabelSettings(container: HTMLElement) {
 		new Setting(container).setHeading().setName('Labels');
 
@@ -231,6 +238,17 @@ export class Graph3DView extends ItemView {
 				.onChange(async (value) => {
 					this.settings.showNodeLabels = value;
 					await this.plugin.saveSettings();
+
+					// Memory Management: Clean up sprites if they are toggled off
+					if (!value) {
+						this.graph.graphData().nodes.forEach((node: GraphNode) => {
+							const sprite = this.nodeSprites.get(node);
+							if (sprite) {
+								sprite.material.dispose();
+								this.nodeSprites.delete(node);
+							}
+						});
+					}
 					this.updateDisplay();
 					this.updateColors();
 				}));
@@ -372,6 +390,14 @@ export class Graph3DView extends ItemView {
 			const newData = await this.processVaultData();
 			const hasNodes = newData && newData.nodes.length > 0;
 
+			// Memory Management: Clean up objects for nodes that are no longer present
+			const oldNodes = this.graph.graphData().nodes as GraphNode[];
+			if (oldNodes.length > 0) {
+				const newNodeIds = new Set(hasNodes ? newData.nodes.map(n => n.id) : []);
+				const nodesToRemove = oldNodes.filter(node => !newNodeIds.has(node.id));
+				nodesToRemove.forEach(node => this.cleanupNode(node));
+			}
+
 			if (hasNodes) {
 				if (useCache) {
 					const adjacencyMap: Map<string, string[]> = new Map();
@@ -430,7 +456,6 @@ export class Graph3DView extends ItemView {
 					// Cool update: use calmer physics to settle new nodes gently
 					this.graph.d3AlphaDecay(0.1); // Faster decay
 					this.graph.d3VelocityDecay(0.6); // More friction
-					// No reheat, just let it settle from the small energy kick of new nodes
 				}
 
 				this.graph.resumeAnimation();
@@ -470,8 +495,7 @@ export class Graph3DView extends ItemView {
 		this.graph.backgroundColor(bgColor);
 
 		this.graph.graphData().nodes.forEach((node: GraphNode) => {
-			// Access the cached mesh material
-			const mesh = (node as any).__mesh;
+			const mesh = this.nodeMeshes.get(node);
 			if (mesh && mesh.material) {
 				const color = this.getNodeColor(node);
 				if (color) {
@@ -586,7 +610,6 @@ export class Graph3DView extends ItemView {
 	public updateDisplay() {
 		if (!this.isGraphInitialized) return;
 		this.graph
-			// nodeLabel is replaced by the custom nodeThreeObject rendering
 			.nodeThreeObject((node: GraphNode) => this.createNodeObject(node))
 			.linkWidth((link: GraphLink) => this.highlightedLinks.has(link) ? (this.settings.linkThickness * 1.5) : this.settings.linkThickness);
 	}
@@ -594,7 +617,6 @@ export class Graph3DView extends ItemView {
 	private createNodeObject(node: GraphNode): THREE.Object3D {
 		const group = new THREE.Group();
 
-		// --- Create Node Mesh ---
 		let shape: NodeShape;
 		let size: number;
 		switch (node.type) {
@@ -615,7 +637,7 @@ export class Graph3DView extends ItemView {
 
 		const color = this.getNodeColor(node);
 		const material = new THREE.MeshLambertMaterial({
-			color: '#ffffff', // Default color, will be overridden
+			color: '#ffffff',
 			transparent: true,
 			opacity: 0.9
 		});
@@ -628,16 +650,15 @@ export class Graph3DView extends ItemView {
 		}
 
 		const mesh = new THREE.Mesh(geometry, material);
-		(node as any).__mesh = mesh; // Cache mesh for color updates and raycasting
+		this.nodeMeshes.set(node, mesh);
 		group.add(mesh);
 
-		// --- Create Text Label ---
 		if (this.settings.showNodeLabels) {
 			const sprite = new SpriteText(node.name);
 			sprite.color = this.settings.labelTextColor;
 			sprite.textHeight = this.settings.labelTextSize;
-			sprite.position.y = s / 2 + 2; // Position sprite just above the node mesh
-			(node as any).__sprite = sprite; // Cache sprite for visibility updates
+			sprite.position.y = s / 2 + 2;
+			this.nodeSprites.set(node, sprite);
 			group.add(sprite);
 		}
 
@@ -679,24 +700,22 @@ export class Graph3DView extends ItemView {
 
 		if (!nodes || !camera) return;
 
-		// Collect all node meshes for raycasting if occlusion is enabled
 		const occluders = this.settings.labelOcclusion
-			? nodes.map((n: any) => n.__mesh).filter(Boolean)
+			? nodes.map((n: GraphNode) => this.nodeMeshes.get(n)).filter(Boolean)
 			: [];
 
-		nodes.forEach((node: any) => {
-			const sprite = node.__sprite;
+		nodes.forEach((node: GraphNode) => {
+			const sprite = this.nodeSprites.get(node);
 			if (!sprite) return;
 
-			const nodePosition = new THREE.Vector3();
 			if (node.__threeObj) {
-				node.__threeObj.getWorldPosition(nodePosition);
+				node.__threeObj.getWorldPosition(this.reusableNodePosition);
 			} else {
 				sprite.visible = false;
 				return;
 			}
 
-			const distance = camera.position.distanceTo(nodePosition);
+			const distance = camera.position.distanceTo(this.reusableNodePosition);
 
 			const visibleDistance = this.settings.labelDistance;
 			const fadeStartDistance = visibleDistance * this.settings.labelFadeThreshold;
@@ -709,15 +728,15 @@ export class Graph3DView extends ItemView {
 				opacity = 1 - (distance - fadeStartDistance) / (visibleDistance - fadeStartDistance);
 			}
 
-			// Phase 3: Occlusion check
 			if (opacity > 0 && this.settings.labelOcclusion && occluders.length > 1) {
-				const direction = nodePosition.clone().sub(camera.position).normalize();
+				const direction = this.reusableDirection.subVectors(this.reusableNodePosition, camera.position).normalize();
 				this.raycaster.set(camera.position, direction);
-				const intersects = this.raycaster.intersectObjects(occluders);
+				const intersects = this.raycaster.intersectObjects(occluders as THREE.Object3D[]);
+				const mesh = this.nodeMeshes.get(node);
 
-				if (intersects.length > 0 && intersects[0].object !== node.__mesh) {
+				if (intersects.length > 0 && intersects[0].object !== mesh) {
 					if (intersects[0].distance < distance) {
-						opacity = 0; // Hide label if it's occluded
+						opacity = 0;
 					}
 				}
 			}
@@ -905,10 +924,26 @@ export class Graph3DView extends ItemView {
 		return { nodes: nodesToShow, links: linksToShow };
 	}
 
+	private cleanupNode(node: GraphNode) {
+		const mesh = this.nodeMeshes.get(node);
+		if (mesh) {
+			mesh.geometry?.dispose();
+			(mesh.material as THREE.Material)?.dispose();
+			this.nodeMeshes.delete(node);
+		}
+
+		const sprite = this.nodeSprites.get(node);
+		if (sprite) {
+			sprite.material?.dispose();
+			this.nodeSprites.delete(node);
+		}
+	}
+
 	async onClose() {
 		if (this.clickTimeout) clearTimeout(this.clickTimeout);
 		this.resizeObserver?.disconnect();
 		if (this.graph) {
+			this.graph.graphData().nodes.forEach((node: GraphNode) => this.cleanupNode(node));
 			this.isGraphInitialized = false;
 			this.graph.pauseAnimation();
 			const renderer = this.graph.renderer();
