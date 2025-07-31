@@ -133,6 +133,25 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 		new Setting(containerEl).setName('Link thickness').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.linkThickness).setDynamicTooltip()
 			.onChange(async (v) => { this.plugin.settings.linkThickness = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
 
+		new Setting(containerEl).setName('Labels').setHeading();
+		new Setting(containerEl).setName('Show node labels').setDesc('Display the name of the node as a label.')
+			.addToggle(toggle => toggle.setValue(this.plugin.settings.showNodeLabels)
+				.onChange(async (value) => { this.plugin.settings.showNodeLabels = value; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
+		new Setting(containerEl).setName('Label distance').setDesc('How far away the camera can be before labels start to fade.')
+			.addSlider(s => s.setLimits(50, 500, 10).setValue(this.plugin.settings.labelDistance).setDynamicTooltip()
+				.onChange(async (v) => { this.plugin.settings.labelDistance = v; await this.plugin.saveSettings(); }));
+		new Setting(containerEl).setName('Label fade threshold').setDesc('The distance at which labels start to fade, as a percentage of the total label distance.')
+			.addSlider(s => s.setLimits(0.1, 1, 0.1).setValue(this.plugin.settings.labelFadeThreshold).setDynamicTooltip()
+				.onChange(async (v) => { this.plugin.settings.labelFadeThreshold = v; await this.plugin.saveSettings(); }));
+		new Setting(containerEl).setName('Label text size').addSlider(s => s.setLimits(1, 10, 0.5).setValue(this.plugin.settings.labelTextSize).setDynamicTooltip()
+			.onChange(async (v) => { this.plugin.settings.labelTextSize = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
+		new Setting(containerEl).setName('Label text color').addColorPicker(c => c.setValue(this.plugin.settings.labelTextColor).onChange(async (v) => { this.plugin.settings.labelTextColor = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
+		// Added for Phase 3
+		new Setting(containerEl).setName('Prevent label occlusion').setDesc('Hides labels that are behind other nodes. Can impact performance on large graphs.')
+			.addToggle(toggle => toggle.setValue(this.plugin.settings.labelOcclusion)
+				.onChange(async (value) => { this.plugin.settings.labelOcclusion = value; await this.plugin.saveSettings(); }));
+
+
 		new Setting(containerEl).setName('Interaction').setHeading();
 		new Setting(containerEl).setName("Zoom on click").setDesc("Automatically zoom in on a node when it's clicked.")
 			.addToggle(toggle => toggle.setValue(this.plugin.settings.zoomOnClick)

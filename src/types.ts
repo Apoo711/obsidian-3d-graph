@@ -8,11 +8,16 @@ export interface GraphGroup {
 export enum NodeShape { Sphere = 'Sphere', Cube = 'Cube', Pyramid = 'Pyramid', Tetrahedron = 'Tetrahedron' }
 
 export interface Graph3DPluginSettings {
+	// Search
+	searchQuery: string;
+	showNeighboringNodes: boolean;
+	// Filters
 	showAttachments: boolean;
 	hideOrphans: boolean;
 	showTags: boolean;
-	searchQuery: string;
+	// Groups
 	groups: GraphGroup[];
+	// Display
 	useThemeColors: boolean;
 	colorNode: string;
 	colorTag: string;
@@ -20,29 +25,43 @@ export interface Graph3DPluginSettings {
 	colorLink: string;
 	colorHighlight: string;
 	backgroundColor: string;
+	// Appearance
 	nodeSize: number;
 	tagNodeSize: number;
 	attachmentNodeSize: number;
 	linkThickness: number;
-	centerForce: number;
-	repelForce: number;
-	linkForce: number;
 	nodeShape: NodeShape;
 	tagShape: NodeShape;
 	attachmentShape: NodeShape;
+	// Labels
+	showNodeLabels: boolean;
+	labelDistance: number;
+	labelFadeThreshold: number;
+	labelTextSize: number;
+	labelTextColor: string;
+	labelOcclusion: boolean; // Added for Phase 3
+	// Interaction
 	zoomOnClick: boolean;
-	showNeighboringNodes: boolean;
 	rotateSpeed: number;
 	panSpeed: number;
 	zoomSpeed: number;
+	// Forces
+	centerForce: number;
+	repelForce: number;
+	linkForce: number;
 }
 
 export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
+	// Search
+	searchQuery: '',
+	showNeighboringNodes: true,
+	// Filters
 	showAttachments: false,
 	hideOrphans: false,
 	showTags: false,
-	searchQuery: '',
+	// Groups
 	groups: [],
+	// Display
 	useThemeColors: true,
 	colorNode: '#2080F0',
 	colorTag: '#9A49E8',
@@ -50,21 +69,30 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	colorLink: '#666666',
 	colorHighlight: '#FFB800',
 	backgroundColor: '#0E0E10',
+	// Appearance
 	nodeSize: 1.5,
 	tagNodeSize: 1.0,
 	attachmentNodeSize: 1.2,
 	linkThickness: 1,
-	centerForce: 0.1,
-	repelForce: 10,
-	linkForce: 0.01,
 	nodeShape: NodeShape.Sphere,
 	tagShape: NodeShape.Tetrahedron,
 	attachmentShape: NodeShape.Cube,
+	// Labels
+	showNodeLabels: true,
+	labelDistance: 150,
+	labelFadeThreshold: 0.8,
+	labelTextSize: 2.5,
+	labelTextColor: '#ffffff',
+	labelOcclusion: false, // Added for Phase 3
+	// Interaction
 	zoomOnClick: true,
-	showNeighboringNodes: true,
 	rotateSpeed: 1.0,
 	panSpeed: 1.0,
 	zoomSpeed: 1.0,
+	// Forces
+	centerForce: 0.1,
+	repelForce: 10,
+	linkForce: 0.01,
 };
 
 export enum NodeType { File, Tag, Attachment }
