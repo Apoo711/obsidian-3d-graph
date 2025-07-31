@@ -2,6 +2,7 @@
 import { ItemView, WorkspaceLeaf, TFile, Setting, setIcon, debounce } from 'obsidian';
 import ForceGraph3D from '3d-force-graph';
 import * as THREE from 'three';
+import SpriteText from 'three-spritetext';
 import Graph3DPlugin from '../main';
 import { Graph3DPluginSettings, GraphNode, GraphLink, NodeShape, NodeType } from './types';
 
@@ -305,7 +306,9 @@ export class Graph3DView extends ItemView {
 			const Graph = (ForceGraph3D as any).default || ForceGraph3D;
 			this.graph = Graph()(this.graphContainer)
 				.onNodeClick((node: GraphNode) => this.handleNodeClick(node))
-				.graphData({ nodes: [], links: [] });
+				.onEngineTick(() => this.updateLabels());
+
+			this.graph.graphData({ nodes: [], links: [] });
 
 			this.initializeForces();
 			this.graph.pauseAnimation();
@@ -434,11 +437,13 @@ export class Graph3DView extends ItemView {
 		this.graph.backgroundColor(bgColor);
 
 		this.graph.graphData().nodes.forEach((node: GraphNode) => {
-			if (node.__threeObj && node.__threeObj.material) {
+			// Access the cached mesh material
+			const mesh = (node as any).__mesh;
+			if (mesh && mesh.material) {
 				const color = this.getNodeColor(node);
 				if (color) {
 					try {
-						(node.__threeObj.material as THREE.MeshLambertMaterial).color.set(color);
+						(mesh.material as THREE.MeshLambertMaterial).color.set(color);
 					} catch (e) {
 						console.error(`3D Graph: Invalid color '${color}' for node`, node, e);
 					}
@@ -548,12 +553,15 @@ export class Graph3DView extends ItemView {
 	public updateDisplay() {
 		if (!this.isGraphInitialized) return;
 		this.graph
-			.nodeLabel('name')
+			// nodeLabel is replaced by the custom nodeThreeObject rendering
 			.nodeThreeObject((node: GraphNode) => this.createNodeObject(node))
 			.linkWidth((link: GraphLink) => this.highlightedLinks.has(link) ? (this.settings.linkThickness * 1.5) : this.settings.linkThickness);
 	}
 
-	private createNodeObject(node: GraphNode): THREE.Mesh {
+	private createNodeObject(node: GraphNode): THREE.Object3D {
+		const group = new THREE.Group();
+
+		// --- Create Node Mesh ---
 		let shape: NodeShape;
 		let size: number;
 		switch (node.type) {
@@ -574,7 +582,7 @@ export class Graph3DView extends ItemView {
 
 		const color = this.getNodeColor(node);
 		const material = new THREE.MeshLambertMaterial({
-			color: '#ffffff',
+			color: '#ffffff', // Default color, will be overridden
 			transparent: true,
 			opacity: 0.9
 		});
@@ -586,7 +594,21 @@ export class Graph3DView extends ItemView {
 			material.color.set(this.settings.colorNode);
 		}
 
-		return new THREE.Mesh(geometry, material);
+		const mesh = new THREE.Mesh(geometry, material);
+		(node as any).__mesh = mesh; // Cache mesh for color updates
+		group.add(mesh);
+
+		// --- Create Text Label ---
+		if (this.settings.showNodeLabels) {
+			const sprite = new SpriteText(node.name);
+			sprite.color = this.settings.labelTextColor;
+			sprite.textHeight = this.settings.labelTextSize;
+			sprite.position.y = s / 2 + 2; // Position sprite just above the node mesh
+			(node as any).__sprite = sprite; // Cache sprite for visibility updates
+			group.add(sprite);
+		}
+
+		return group;
 	}
 
 	public updateForces() {
@@ -614,6 +636,44 @@ export class Graph3DView extends ItemView {
 			controls.panSpeed = panSpeed;
 			controls.zoomSpeed = zoomSpeed;
 		}
+	}
+
+	private updateLabels() {
+		if (!this.isGraphInitialized) return;
+
+		const camera = this.graph.camera();
+		const nodes = this.graph.graphData().nodes;
+
+		if (!nodes || !camera) return;
+
+		nodes.forEach((node: any) => {
+			const sprite = node.__sprite;
+			if (!sprite) return;
+
+			const nodePosition = new THREE.Vector3();
+			if (node.__threeObj) {
+				node.__threeObj.getWorldPosition(nodePosition);
+			} else {
+				sprite.visible = false;
+				return;
+			}
+
+			const distance = camera.position.distanceTo(nodePosition);
+
+			const visibleDistance = this.settings.labelDistance;
+			const fadeStartDistance = visibleDistance * this.settings.labelFadeThreshold;
+
+			let opacity = 0;
+
+			if (distance <= fadeStartDistance) {
+				opacity = 1;
+			} else if (distance <= visibleDistance) {
+				opacity = 1 - (distance - fadeStartDistance) / (visibleDistance - fadeStartDistance);
+			}
+
+			sprite.material.opacity = opacity;
+			sprite.visible = opacity > 0.01;
+		});
 	}
 
 	private handleNodeClick(node: GraphNode) {
