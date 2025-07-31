@@ -18,6 +18,8 @@ export class Graph3DView extends ItemView {
 	// Reusable objects for performance optimization
 	private reusableNodePosition = new THREE.Vector3();
 	private reusableDirection = new THREE.Vector3();
+	private cachedOccluders: THREE.Mesh[] = [];
+	private occludersCacheDirty = true;
 
 	// WeakMaps for type safety and automatic garbage collection
 	private nodeMeshes = new WeakMap<GraphNode, THREE.Mesh>();
@@ -42,6 +44,10 @@ export class Graph3DView extends ItemView {
 	private isGraphInitialized = false;
 	private isUpdating = false;
 	private readonly CLICK_DELAY = 250;
+
+	// Throttling for label updates
+	private lastLabelUpdateTime = 0;
+	private readonly LABEL_UPDATE_INTERVAL = 100; // ms
 
 	constructor(leaf: WorkspaceLeaf, plugin: Graph3DPlugin) {
 		super(leaf);
@@ -239,15 +245,8 @@ export class Graph3DView extends ItemView {
 					this.settings.showNodeLabels = value;
 					await this.plugin.saveSettings();
 
-					// Memory Management: Clean up sprites if they are toggled off
 					if (!value) {
-						this.graph.graphData().nodes.forEach((node: GraphNode) => {
-							const sprite = this.nodeSprites.get(node);
-							if (sprite) {
-								sprite.material.dispose();
-								this.nodeSprites.delete(node);
-							}
-						});
+						this.graph.graphData().nodes.forEach((node: GraphNode) => this.cleanupNode(node, { cleanMesh: false }));
 					}
 					this.updateDisplay();
 					this.updateColors();
@@ -357,7 +356,13 @@ export class Graph3DView extends ItemView {
 			const Graph = (ForceGraph3D as any).default || ForceGraph3D;
 			this.graph = Graph()(this.graphContainer)
 				.onNodeClick((node: GraphNode) => this.handleNodeClick(node))
-				.onEngineTick(() => this.updateLabels());
+				.onEngineTick(() => {
+					const now = performance.now();
+					if (now - this.lastLabelUpdateTime > this.LABEL_UPDATE_INTERVAL) {
+						this.lastLabelUpdateTime = now;
+						this.updateLabels();
+					}
+				});
 
 			this.graph.graphData({ nodes: [], links: [] });
 
@@ -390,7 +395,6 @@ export class Graph3DView extends ItemView {
 			const newData = await this.processVaultData();
 			const hasNodes = newData && newData.nodes.length > 0;
 
-			// Memory Management: Clean up objects for nodes that are no longer present
 			const oldNodes = this.graph.graphData().nodes as GraphNode[];
 			if (oldNodes.length > 0) {
 				const newNodeIds = new Set(hasNodes ? newData.nodes.map(n => n.id) : []);
@@ -428,7 +432,6 @@ export class Graph3DView extends ItemView {
 							}
 
 							if (connectedNodePos) {
-								// Place new node near neighbor with a smaller offset
 								node.x = connectedNodePos.x + (Math.random() - 0.5) * 2;
 								node.y = connectedNodePos.y + (Math.random() - 0.5) * 2;
 								node.z = connectedNodePos.z + (Math.random() - 0.5) * 2;
@@ -440,22 +443,20 @@ export class Graph3DView extends ItemView {
 				this.graph.pauseAnimation();
 				this.messageEl.removeClass('is-visible');
 				this.graph.graphData(newData);
+				this.occludersCacheDirty = true;
 
 				this.updateForces();
 				this.updateDisplay();
 				this.updateColors();
 				this.updateControls();
 
-				// Conditionally set physics parameters
 				if (isFirstLoad || reheat) {
-					// Hot update: reset to default physics and reheat
 					this.graph.d3AlphaDecay(0.0228);
 					this.graph.d3VelocityDecay(0.4);
 					this.graph.d3ReheatSimulation();
 				} else if (useCache) {
-					// Cool update: use calmer physics to settle new nodes gently
-					this.graph.d3AlphaDecay(0.1); // Faster decay
-					this.graph.d3VelocityDecay(0.6); // More friction
+					this.graph.d3AlphaDecay(0.1);
+					this.graph.d3VelocityDecay(0.6);
 				}
 
 				this.graph.resumeAnimation();
@@ -700,9 +701,10 @@ export class Graph3DView extends ItemView {
 
 		if (!nodes || !camera) return;
 
-		const occluders = this.settings.labelOcclusion
-			? nodes.map((n: GraphNode) => this.nodeMeshes.get(n)).filter(Boolean)
-			: [];
+		if (this.settings.labelOcclusion && this.occludersCacheDirty) {
+			this.cachedOccluders = nodes.map((n: GraphNode) => this.nodeMeshes.get(n)).filter(Boolean) as THREE.Mesh[];
+			this.occludersCacheDirty = false;
+		}
 
 		nodes.forEach((node: GraphNode) => {
 			const sprite = this.nodeSprites.get(node);
@@ -728,10 +730,10 @@ export class Graph3DView extends ItemView {
 				opacity = 1 - (distance - fadeStartDistance) / (visibleDistance - fadeStartDistance);
 			}
 
-			if (opacity > 0 && this.settings.labelOcclusion && occluders.length > 1) {
+			if (opacity > 0 && this.settings.labelOcclusion && this.cachedOccluders.length > 1) {
 				const direction = this.reusableDirection.subVectors(this.reusableNodePosition, camera.position).normalize();
 				this.raycaster.set(camera.position, direction);
-				const intersects = this.raycaster.intersectObjects(occluders as THREE.Object3D[]);
+				const intersects = this.raycaster.intersectObjects(this.cachedOccluders);
 				const mesh = this.nodeMeshes.get(node);
 
 				if (intersects.length > 0 && intersects[0].object !== mesh) {
@@ -924,16 +926,20 @@ export class Graph3DView extends ItemView {
 		return { nodes: nodesToShow, links: linksToShow };
 	}
 
-	private cleanupNode(node: GraphNode) {
-		const mesh = this.nodeMeshes.get(node);
-		if (mesh) {
-			mesh.geometry?.dispose();
-			(mesh.material as THREE.Material)?.dispose();
-			this.nodeMeshes.delete(node);
+	private cleanupNode(node: GraphNode, options: { cleanMesh?: boolean } = { cleanMesh: true }) {
+		if (options.cleanMesh) {
+			const mesh = this.nodeMeshes.get(node);
+			if (mesh) {
+				mesh.geometry?.dispose();
+				(mesh.material as THREE.Material)?.dispose();
+				this.nodeMeshes.delete(node);
+			}
 		}
 
 		const sprite = this.nodeSprites.get(node);
 		if (sprite) {
+			sprite.parent?.remove(sprite);
+			sprite.geometry?.dispose();
 			sprite.material?.dispose();
 			this.nodeSprites.delete(node);
 		}
@@ -959,5 +965,3 @@ export class Graph3DView extends ItemView {
 		if (this.messageEl) {
 			this.messageEl.remove();
 		}
-	}
-}
