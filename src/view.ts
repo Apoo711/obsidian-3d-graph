@@ -137,7 +137,7 @@ export class Graph3DView extends ItemView {
 					.onChange(async (value: 'path' | 'tag') => {
 						filter.type = value;
 						await this.plugin.saveSettings();
-						this.updateData({ redrawData: true, useCache: true });
+						this.updateData({ useCache: true });
 					}))
 				.addText(text => text
 					.setPlaceholder('Enter filter value...')
@@ -145,7 +145,7 @@ export class Graph3DView extends ItemView {
 					.onChange(debounce(async (value) => {
 						filter.value = value;
 						await this.plugin.saveSettings();
-						this.updateData({ redrawData: true, useCache: true });
+						this.updateData({ useCache: true });
 					}, 500, true)))
 				.addToggle(toggle => toggle
 					.setTooltip("Invert filter (NOT)")
@@ -153,7 +153,7 @@ export class Graph3DView extends ItemView {
 					.onChange(async (value) => {
 						filter.inverted = value;
 						await this.plugin.saveSettings();
-						this.updateData({ redrawData: true, useCache: true });
+						this.updateData({ useCache: true });
 					}))
 				.addExtraButton(button => button
 					.setIcon('cross')
@@ -162,7 +162,7 @@ export class Graph3DView extends ItemView {
 						this.settings.filters.splice(index, 1);
 						await this.plugin.saveSettings();
 						this.renderSettingsPanel();
-						this.updateData({ redrawData: true, useCache: true });
+						this.updateData({ useCache: true });
 					}));
 		});
 
@@ -316,6 +316,13 @@ export class Graph3DView extends ItemView {
 	private renderInteractionSettings(container: HTMLElement) {
 		new Setting(container).setHeading().setName('Interaction');
 
+		new Setting(container).setName("Use Keyboard Controls (WASD)")
+			.addToggle(toggle => toggle.setValue(this.settings.useKeyboardControls)
+				.onChange(async (value) => { this.settings.useKeyboardControls = value; await this.plugin.saveSettings(); this.updateControls() }));
+
+		new Setting(container).setName('Keyboard move speed').addSlider(s => s.setLimits(0.1, 10, 0.1).setValue(this.settings.keyboardMoveSpeed).setDynamicTooltip()
+			.onChange(async (v) => { this.settings.keyboardMoveSpeed = v; await this.plugin.saveSettings(); }));
+
 		new Setting(container).setName("Zoom on click")
 			.addToggle(toggle => toggle.setValue(this.settings.zoomOnClick)
 				.onChange(async (value) => {
@@ -394,8 +401,12 @@ export class Graph3DView extends ItemView {
 	}
 
 	private handleKeyDown(event: KeyboardEvent) {
-		if (this.settings.useKeyboardControls) {
-			this.pressedKeys.add(event.key.toLowerCase());
+		const movementKeys = ['w', 'a', 's', 'd', 'q', 'e'];
+		const key = event.key.toLowerCase();
+
+		if (this.settings.useKeyboardControls && movementKeys.includes(key)) {
+			event.preventDefault();
+			this.pressedKeys.add(key);
 		}
 	}
 
@@ -408,7 +419,10 @@ export class Graph3DView extends ItemView {
 	private handleKeyboardMovement() {
 		if (!this.settings.useKeyboardControls || this.pressedKeys.size === 0) return;
 
+		const controls = this.graph.controls();
 		const camera = this.graph.camera();
+		if (!controls || !camera) return;
+
 		const moveSpeed = this.settings.keyboardMoveSpeed;
 		const direction = new THREE.Vector3();
 		camera.getWorldDirection(direction);
@@ -416,26 +430,34 @@ export class Graph3DView extends ItemView {
 		const right = new THREE.Vector3();
 		right.crossVectors(camera.up, direction).normalize();
 
-		if (this.pressedKeys.has('w')) {
-			camera.position.addScaledVector(direction, moveSpeed);
-		}
-		if (this.pressedKeys.has('s')) {
-			camera.position.addScaledVector(direction, -moveSpeed);
-		}
-		if (this.pressedKeys.has('a')) {
-			camera.position.addScaledVector(right, moveSpeed);
-		}
-		if (this.pressedKeys.has('d')) {
-			camera.position.addScaledVector(right, -moveSpeed);
-		}
-		if (this.pressedKeys.has('e')) {
-			camera.position.y += moveSpeed;
-		}
-		if (this.pressedKeys.has('q')) {
-			camera.position.y -= moveSpeed;
+		const moveVector = new THREE.Vector3();
+
+		if (this.pressedKeys.has('w')) moveVector.add(direction);
+		if (this.pressedKeys.has('s')) moveVector.sub(direction);
+		if (this.pressedKeys.has('a')) moveVector.sub(right); // Corrected from add
+		if (this.pressedKeys.has('d')) moveVector.add(right); // Corrected from sub
+
+		if (moveVector.lengthSq() > 0) {
+			moveVector.normalize().multiplyScalar(moveSpeed);
+			const newPos = new THREE.Vector3().copy(camera.position).add(moveVector);
+			const newTarget = new THREE.Vector3().copy(controls.target).add(moveVector);
+			this.graph.cameraPosition(newPos, newTarget);
 		}
 
-		this.graph.cameraPosition(camera.position);
+		if (this.pressedKeys.has('e')) {
+			const newPos = new THREE.Vector3().copy(camera.position);
+			newPos.y += moveSpeed;
+			const newTarget = new THREE.Vector3().copy(controls.target);
+			newTarget.y += moveSpeed;
+			this.graph.cameraPosition(newPos, newTarget);
+		}
+		if (this.pressedKeys.has('q')) {
+			const newPos = new THREE.Vector3().copy(camera.position);
+			newPos.y -= moveSpeed;
+			const newTarget = new THREE.Vector3().copy(controls.target);
+			newTarget.y -= moveSpeed;
+			this.graph.cameraPosition(newPos, newTarget);
+		}
 	}
 
 	initializeGraph() {
@@ -446,6 +468,7 @@ export class Graph3DView extends ItemView {
 			this.graph = Graph()(this.graphContainer)
 				.onNodeClick((node: GraphNode, event: MouseEvent) => this.handleNodeClick(node, event))
 				.onNodeHover((node: GraphNode | null) => this.handleNodeHover(node))
+				.linkCurvature(link => this.getLinkCurvature(link))
 				.onEngineTick(() => {
 					const now = performance.now();
 					if (now - this.lastLabelUpdateTime > this.LABEL_UPDATE_INTERVAL) {
@@ -933,6 +956,15 @@ export class Graph3DView extends ItemView {
 		}
 		this.updateColors();
 		this.updateDisplay();
+	}
+
+	private getLinkCurvature(link: any) {
+		const allLinks = this.graph.graphData().links;
+		const hasReciprocal = allLinks.some((l: any) => l.source.id === link.target.id && l.target.id === link.source.id);
+		if (hasReciprocal) {
+			return link.source.id > link.target.id ? 0.2 : -0.2;
+		}
+		return 0;
 	}
 
 	private matchesFilter(node: GraphNode, filter: Filter): boolean {
