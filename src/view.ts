@@ -409,7 +409,7 @@ export class Graph3DView extends ItemView {
 		if (!this.settings.useKeyboardControls || this.pressedKeys.size === 0) return;
 
 		const camera = this.graph.camera();
-		const moveSpeed = 2;
+		const moveSpeed = this.settings.keyboardMoveSpeed;
 		const direction = new THREE.Vector3();
 		camera.getWorldDirection(direction);
 
@@ -789,7 +789,6 @@ export class Graph3DView extends ItemView {
 		const { rotateSpeed, panSpeed, zoomSpeed } = this.settings;
 		const controls = this.graph.controls();
 		if (controls) {
-			controls.enabled = !this.settings.useKeyboardControls; // Disable mouse controls if keyboard is active
 			controls.rotateSpeed = rotateSpeed;
 			controls.panSpeed = panSpeed;
 			controls.zoomSpeed = zoomSpeed;
@@ -850,7 +849,7 @@ export class Graph3DView extends ItemView {
 				}
 			}
 
-			sprite.material.opacity = opacity;
+			(sprite.material as THREE.SpriteMaterial).opacity = opacity;
 			sprite.visible = opacity > 0.01;
 		});
 	}
@@ -908,9 +907,12 @@ export class Graph3DView extends ItemView {
 
 			if (node.__threeObj && this.settings.zoomOnClick) {
 				const distance = 40;
-				const direction = new THREE.Vector3().subVectors(camera.position, node.__threeObj.position).normalize();
-				const targetPosition = new THREE.Vector3().addVectors(node.__threeObj.position, direction.multiplyScalar(distance));
-				this.graph.cameraPosition(targetPosition, node.__threeObj.position, 1000);
+				const nodePosition = new THREE.Vector3();
+				node.__threeObj.getWorldPosition(nodePosition);
+				const cameraPosition = this.graph.camera().position;
+				const direction = new THREE.Vector3().subVectors(cameraPosition, nodePosition).normalize();
+				const targetPosition = new THREE.Vector3().addVectors(nodePosition, direction.multiplyScalar(distance));
+				this.graph.cameraPosition(targetPosition, nodePosition, 1000);
 			}
 		}
 		this.updateColors();

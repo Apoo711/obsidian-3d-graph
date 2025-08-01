@@ -51,7 +51,8 @@ export interface Graph3DPluginSettings {
 	labelBackgroundOpacity: number;
 	labelOcclusion: boolean;
 	// Interaction
-	useKeyboardControls: boolean; // Added for Phase 3
+	useKeyboardControls: boolean;
+	keyboardMoveSpeed: number; // Added for keyboard speed control
 	zoomOnClick: boolean;
 	rotateSpeed: number;
 	panSpeed: number;
@@ -100,7 +101,8 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	labelBackgroundOpacity: 0.3,
 	labelOcclusion: false,
 	// Interaction
-	useKeyboardControls: true, // Added for Phase 3
+	useKeyboardControls: true,
+	keyboardMoveSpeed: 2.0, // Added for keyboard speed control
 	zoomOnClick: true,
 	rotateSpeed: 1.0,
 	panSpeed: 1.0,
