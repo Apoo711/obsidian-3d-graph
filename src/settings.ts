@@ -65,7 +65,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						this.triggerUpdate({ redrawData: true, useCache: true });
 					}, 500, true)))
-				.addToggle(toggle => toggle // Added NOT toggle
+				.addToggle(toggle => toggle
 					.setTooltip("Invert filter (NOT)")
 					.setValue(filter.inverted)
 					.onChange(async (value) => {
@@ -193,6 +193,9 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 
 
 		new Setting(containerEl).setName('Interaction').setHeading();
+		new Setting(containerEl).setName("Use Keyboard Controls (WASD)").setDesc("Enable game-like controls for camera movement.")
+			.addToggle(toggle => toggle.setValue(this.plugin.settings.useKeyboardControls)
+				.onChange(async (value) => { this.plugin.settings.useKeyboardControls = value; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true }); }));
 		new Setting(containerEl).setName("Zoom on click").addToggle(toggle => toggle.setValue(this.plugin.settings.zoomOnClick)
 			.onChange(async (value) => {this.plugin.settings.zoomOnClick = value; await this.plugin.saveSettings();}));
 		new Setting(containerEl).setName('Rotation speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.rotateSpeed).setDynamicTooltip()

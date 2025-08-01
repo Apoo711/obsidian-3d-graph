@@ -1,16 +1,14 @@
 import * as THREE from 'three';
 
-// Renamed from GraphGroup for clarity
 export interface ColorGroup {
 	query: string;
 	color: string;
 }
 
-// New type for the advanced filtering system
 export interface Filter {
 	type: 'path' | 'tag';
 	value: string;
-	inverted: boolean; // Added for NOT operator
+	inverted: boolean;
 }
 
 export enum NodeShape { Sphere = 'Sphere', Cube = 'Cube', Pyramid = 'Pyramid', Tetrahedron = 'Tetrahedron' }
@@ -20,12 +18,12 @@ export interface Graph3DPluginSettings {
 	searchQuery: string;
 	showNeighboringNodes: boolean;
 	// Filters
-	filters: Filter[]; // New advanced filters
+	filters: Filter[];
 	showAttachments: boolean;
 	hideOrphans: boolean;
 	showTags: boolean;
 	// Groups
-	groups: ColorGroup[]; // Renamed from GraphGroup
+	groups: ColorGroup[];
 	// Display
 	useThemeColors: boolean;
 	colorNode: string;
@@ -47,12 +45,13 @@ export interface Graph3DPluginSettings {
 	labelDistance: number;
 	labelFadeThreshold: number;
 	labelTextSize: number;
-	labelTextColorLight: string; // New theme-aware color
-	labelTextColorDark: string;  // New theme-aware color
-	labelBackgroundColor: string; // New background color
-	labelBackgroundOpacity: number; // New background opacity
+	labelTextColorLight: string;
+	labelTextColorDark: string;
+	labelBackgroundColor: string;
+	labelBackgroundOpacity: number;
 	labelOcclusion: boolean;
 	// Interaction
+	useKeyboardControls: boolean; // Added for Phase 3
 	zoomOnClick: boolean;
 	rotateSpeed: number;
 	panSpeed: number;
@@ -68,7 +67,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	searchQuery: '',
 	showNeighboringNodes: true,
 	// Filters
-	filters: [], // New advanced filters
+	filters: [],
 	showAttachments: false,
 	hideOrphans: false,
 	showTags: false,
@@ -95,12 +94,13 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	labelDistance: 150,
 	labelFadeThreshold: 0.8,
 	labelTextSize: 2.5,
-	labelTextColorLight: '#000000', // Default for light theme
-	labelTextColorDark: '#ffffff',  // Default for dark theme
+	labelTextColorLight: '#000000',
+	labelTextColorDark: '#ffffff',
 	labelBackgroundColor: '#ffffff',
 	labelBackgroundOpacity: 0.3,
 	labelOcclusion: false,
 	// Interaction
+	useKeyboardControls: true, // Added for Phase 3
 	zoomOnClick: true,
 	rotateSpeed: 1.0,
 	panSpeed: 1.0,
@@ -120,7 +120,7 @@ export interface GraphNode {
 	type: NodeType;
 	tags?: string[];
 	content?: string;
-	__threeObj?: THREE.Object3D; // Note: Changed to Object3D to support Groups
+	__threeObj?: THREE.Object3D;
 	x?: number;
 	y?: number;
 	z?: number;

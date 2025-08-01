@@ -47,6 +47,9 @@ export class Graph3DView extends ItemView {
 	private lastLabelUpdateTime = 0;
 	private readonly LABEL_UPDATE_INTERVAL = 100;
 
+	// Keyboard controls state
+	private pressedKeys = new Set<string>();
+
 	constructor(leaf: WorkspaceLeaf, plugin: Graph3DPlugin) {
 		super(leaf);
 		this.plugin = plugin;
@@ -76,6 +79,9 @@ export class Graph3DView extends ItemView {
 			}
 		});
 		this.resizeObserver.observe(this.graphContainer);
+
+		this.registerDomEvent(window, 'keydown', this.handleKeyDown.bind(this));
+		this.registerDomEvent(window, 'keyup', this.handleKeyUp.bind(this));
 	}
 
 	private addLocalControls() {
@@ -387,19 +393,66 @@ export class Graph3DView extends ItemView {
 		this.linkForce = this.graph.d3Force('link');
 	}
 
+	private handleKeyDown(event: KeyboardEvent) {
+		if (this.settings.useKeyboardControls) {
+			this.pressedKeys.add(event.key.toLowerCase());
+		}
+	}
+
+	private handleKeyUp(event: KeyboardEvent) {
+		if (this.settings.useKeyboardControls) {
+			this.pressedKeys.delete(event.key.toLowerCase());
+		}
+	}
+
+	private handleKeyboardMovement() {
+		if (!this.settings.useKeyboardControls || this.pressedKeys.size === 0) return;
+
+		const camera = this.graph.camera();
+		const moveSpeed = 2;
+		const direction = new THREE.Vector3();
+		camera.getWorldDirection(direction);
+
+		const right = new THREE.Vector3();
+		right.crossVectors(camera.up, direction).normalize();
+
+		if (this.pressedKeys.has('w')) {
+			camera.position.addScaledVector(direction, moveSpeed);
+		}
+		if (this.pressedKeys.has('s')) {
+			camera.position.addScaledVector(direction, -moveSpeed);
+		}
+		if (this.pressedKeys.has('a')) {
+			camera.position.addScaledVector(right, moveSpeed);
+		}
+		if (this.pressedKeys.has('d')) {
+			camera.position.addScaledVector(right, -moveSpeed);
+		}
+		if (this.pressedKeys.has('e')) {
+			camera.position.y += moveSpeed;
+		}
+		if (this.pressedKeys.has('q')) {
+			camera.position.y -= moveSpeed;
+		}
+
+		this.graph.cameraPosition(camera.position);
+	}
+
 	initializeGraph() {
 		this.app.workspace.onLayoutReady(async () => {
 			if (!this.graphContainer) return;
 
 			const Graph = (ForceGraph3D as any).default || ForceGraph3D;
 			this.graph = Graph()(this.graphContainer)
-				.onNodeClick((node: GraphNode) => this.handleNodeClick(node))
+				.onNodeClick((node: GraphNode, event: MouseEvent) => this.handleNodeClick(node, event))
+				.onNodeHover((node: GraphNode | null) => this.handleNodeHover(node))
 				.onEngineTick(() => {
 					const now = performance.now();
 					if (now - this.lastLabelUpdateTime > this.LABEL_UPDATE_INTERVAL) {
 						this.lastLabelUpdateTime = now;
 						this.updateLabels();
 					}
+					this.handleKeyboardMovement();
 				});
 
 			this.graph.graphData({ nodes: [], links: [] });
@@ -650,7 +703,9 @@ export class Graph3DView extends ItemView {
 		if (!this.isGraphInitialized) return;
 		this.graph
 			.nodeThreeObject((node: GraphNode) => this.createNodeObject(node))
-			.linkWidth((link: GraphLink) => this.highlightedLinks.has(link) ? (this.settings.linkThickness * 1.5) : this.settings.linkThickness);
+			.linkWidth((link: GraphLink) => this.highlightedLinks.has(link) ? (this.settings.linkThickness * 2) : this.settings.linkThickness)
+			.linkDirectionalParticles((link: GraphLink) => this.highlightedLinks.has(link) ? 4 : 0)
+			.linkDirectionalParticleWidth(2);
 	}
 
 	private hexToRgba(hex: string, alpha: number): string {
@@ -734,6 +789,7 @@ export class Graph3DView extends ItemView {
 		const { rotateSpeed, panSpeed, zoomSpeed } = this.settings;
 		const controls = this.graph.controls();
 		if (controls) {
+			controls.enabled = !this.settings.useKeyboardControls; // Disable mouse controls if keyboard is active
 			controls.rotateSpeed = rotateSpeed;
 			controls.panSpeed = panSpeed;
 			controls.zoomSpeed = zoomSpeed;
@@ -799,8 +855,13 @@ export class Graph3DView extends ItemView {
 		});
 	}
 
-	private handleNodeClick(node: GraphNode) {
+	private handleNodeClick(node: GraphNode, event?: MouseEvent) {
 		if (!node) return;
+
+		if (event && (event.ctrlKey || event.metaKey)) {
+			this.app.workspace.openLinkText(node.id, node.id, 'tab');
+			return;
+		}
 
 		if (this.clickTimeout) {
 			clearTimeout(this.clickTimeout); this.clickTimeout = null;
@@ -846,30 +907,30 @@ export class Graph3DView extends ItemView {
 			});
 
 			if (node.__threeObj && this.settings.zoomOnClick) {
-				const allNodes = this.graph.graphData().nodes;
-				const highlightedNodeObjects = allNodes
-					.filter((n: GraphNode) => this.highlightedNodes.has(n.id) && n.__threeObj)
-					.map((n: GraphNode) => n.__threeObj);
-
-				if (highlightedNodeObjects.length > 0) {
-					const box = new THREE.Box3().setFromObject(highlightedNodeObjects[0]);
-					highlightedNodeObjects.slice(1).forEach((obj: THREE.Object3D) => box.expandByObject(obj));
-
-					const center = box.getCenter(new THREE.Vector3());
-					const size = box.getSize(new THREE.Vector3());
-
-					const maxDim = Math.max(size.x, size.y, size.z);
-					const cameraZ = maxDim * 2.5;
-
-					this.graph.cameraPosition({
-						x: center.x,
-						y: center.y,
-						z: center.z + cameraZ
-					}, center, 1000);
-				}
+				const distance = 40;
+				const direction = new THREE.Vector3().subVectors(camera.position, node.__threeObj.position).normalize();
+				const targetPosition = new THREE.Vector3().addVectors(node.__threeObj.position, direction.multiplyScalar(distance));
+				this.graph.cameraPosition(targetPosition, node.__threeObj.position, 1000);
 			}
 		}
 		this.updateColors();
+		this.updateDisplay();
+	}
+
+	private handleNodeHover(node: GraphNode | null) {
+		this.highlightedNodes.clear();
+		this.highlightedLinks.clear();
+
+		if (node) {
+			this.highlightedNodes.add(node.id);
+			this.graph.graphData().links.forEach((link: any) => {
+				if (link.source.id === node.id || link.target.id === node.id) {
+					this.highlightedLinks.add(link);
+				}
+			});
+		}
+		this.updateColors();
+		this.updateDisplay();
 	}
 
 	private matchesFilter(node: GraphNode, filter: Filter): boolean {
