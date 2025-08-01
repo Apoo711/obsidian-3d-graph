@@ -16,7 +16,6 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 				}
 
 				if (options.redrawData) {
-					// Pass cache and reheat options through
 					leaf.view.updateData({ useCache: options.useCache, reheat: options.reheat });
 				} else if (options.updateDisplay) {
 					leaf.view.updateDisplay();
@@ -34,7 +33,8 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		new Setting(containerEl).setName('Search').setHeading();
+		new Setting(containerEl).setName('Filters').setHeading();
+
 		new Setting(containerEl).setName('Search term').setDesc('Only show notes containing this text.')
 			.addText(text => text.setPlaceholder('Enter search term...')
 				.setValue(this.plugin.settings.searchQuery)
@@ -44,18 +44,57 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 					this.triggerUpdate({ redrawData: true, useCache: true });
 				}, 500, true)));
 
-		new Setting(containerEl).setName('Show neighboring nodes')
-			.setDesc('Also show the nodes linked to the search results.')
-			.addToggle(toggle => toggle.setValue(this.plugin.settings.showNeighboringNodes)
-				.onChange(async (value) => {
-					this.plugin.settings.showNeighboringNodes = value;
-					await this.plugin.saveSettings();
-					if (this.plugin.settings.searchQuery) {
+		containerEl.createEl('p', { text: 'Use the filters below to limit the number of nodes in the graph. Filters are applied in order.', cls: 'setting-item-description' });
+
+		this.plugin.settings.filters.forEach((filter, index) => {
+			const setting = new Setting(containerEl)
+				.addDropdown(dropdown => dropdown
+					.addOption('path', 'Path')
+					.addOption('tag', 'Tag')
+					.setValue(filter.type)
+					.onChange(async (value: 'path' | 'tag') => {
+						filter.type = value;
+						await this.plugin.saveSettings();
 						this.triggerUpdate({ redrawData: true, useCache: true });
-					}
+					}))
+				.addText(text => text
+					.setPlaceholder('Enter filter value...')
+					.setValue(filter.value)
+					.onChange(debounce(async (value) => {
+						filter.value = value;
+						await this.plugin.saveSettings();
+						this.triggerUpdate({ redrawData: true, useCache: true });
+					}, 500, true)))
+				.addToggle(toggle => toggle // Added NOT toggle
+					.setTooltip("Invert filter (NOT)")
+					.setValue(filter.inverted)
+					.onChange(async (value) => {
+						filter.inverted = value;
+						await this.plugin.saveSettings();
+						this.triggerUpdate({ redrawData: true, useCache: true });
+					}))
+				.addExtraButton(button => button
+					.setIcon('cross')
+					.setTooltip('Remove filter')
+					.onClick(async () => {
+						this.plugin.settings.filters.splice(index, 1);
+						await this.plugin.saveSettings();
+						this.display();
+						this.triggerUpdate({ redrawData: true, useCache: true });
+					}));
+		});
+
+		new Setting(containerEl)
+			.addButton(button => button
+				.setButtonText('Add new filter')
+				.onClick(async () => {
+					this.plugin.settings.filters.push({ type: 'path', value: '', inverted: false });
+					await this.plugin.saveSettings();
+					this.display();
 				}));
 
-		new Setting(containerEl).setName('Filters').setHeading();
+
+		new Setting(containerEl).setName('General Filters').setHeading();
 		new Setting(containerEl).setName('Show tags').addToggle(toggle => toggle.setValue(this.plugin.settings.showTags)
 			.onChange(async (value) => { this.plugin.settings.showTags = value; await this.plugin.saveSettings(); this.triggerUpdate({ redrawData: true, useCache: true }); }));
 		new Setting(containerEl).setName('Show attachments').addToggle(toggle => toggle.setValue(this.plugin.settings.showAttachments)
@@ -63,7 +102,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 		new Setting(containerEl).setName('Hide orphans').addToggle(toggle => toggle.setValue(this.plugin.settings.hideOrphans)
 			.onChange(async (value) => { this.plugin.settings.hideOrphans = value; await this.plugin.saveSettings(); this.triggerUpdate({ redrawData: true, useCache: true }); }));
 
-		new Setting(containerEl).setName('Groups').setHeading();
+		new Setting(containerEl).setName('Color Groups').setHeading();
 		containerEl.createEl('p', { text: 'Color nodes with custom rules. Use "path:", "tag:", "file:", or text match. Examples: path:folder, tag:#project, file:MyNote.md, file:*.pdf', cls: 'setting-item-description' });
 
 		this.plugin.settings.groups.forEach((group, index) => {
@@ -134,28 +173,28 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 			.onChange(async (v) => { this.plugin.settings.linkThickness = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
 
 		new Setting(containerEl).setName('Labels').setHeading();
-		new Setting(containerEl).setName('Show node labels').setDesc('Display the name of the node as a label.')
-			.addToggle(toggle => toggle.setValue(this.plugin.settings.showNodeLabels)
-				.onChange(async (value) => { this.plugin.settings.showNodeLabels = value; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
-		new Setting(containerEl).setName('Label distance').setDesc('How far away the camera can be before labels start to fade.')
-			.addSlider(s => s.setLimits(50, 500, 10).setValue(this.plugin.settings.labelDistance).setDynamicTooltip()
-				.onChange(async (v) => { this.plugin.settings.labelDistance = v; await this.plugin.saveSettings(); }));
-		new Setting(containerEl).setName('Label fade threshold').setDesc('The distance at which labels start to fade, as a percentage of the total label distance.')
-			.addSlider(s => s.setLimits(0.1, 1, 0.1).setValue(this.plugin.settings.labelFadeThreshold).setDynamicTooltip()
-				.onChange(async (v) => { this.plugin.settings.labelFadeThreshold = v; await this.plugin.saveSettings(); }));
+		new Setting(containerEl).setName('Show node labels').addToggle(toggle => toggle.setValue(this.plugin.settings.showNodeLabels)
+			.onChange(async (value) => { this.plugin.settings.showNodeLabels = value; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
+		new Setting(containerEl).setName('Label distance').addSlider(s => s.setLimits(50, 500, 10).setValue(this.plugin.settings.labelDistance).setDynamicTooltip()
+			.onChange(async (v) => { this.plugin.settings.labelDistance = v; await this.plugin.saveSettings(); }));
+		new Setting(containerEl).setName('Label fade threshold').addSlider(s => s.setLimits(0.1, 1, 0.1).setValue(this.plugin.settings.labelFadeThreshold).setDynamicTooltip()
+			.onChange(async (v) => { this.plugin.settings.labelFadeThreshold = v; await this.plugin.saveSettings(); }));
 		new Setting(containerEl).setName('Label text size').addSlider(s => s.setLimits(1, 10, 0.5).setValue(this.plugin.settings.labelTextSize).setDynamicTooltip()
 			.onChange(async (v) => { this.plugin.settings.labelTextSize = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
-		new Setting(containerEl).setName('Label text color').addColorPicker(c => c.setValue(this.plugin.settings.labelTextColor).onChange(async (v) => { this.plugin.settings.labelTextColor = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
-		// Added for Phase 3
-		new Setting(containerEl).setName('Prevent label occlusion').setDesc('Hides labels that are behind other nodes. Can impact performance on large graphs.')
-			.addToggle(toggle => toggle.setValue(this.plugin.settings.labelOcclusion)
-				.onChange(async (value) => { this.plugin.settings.labelOcclusion = value; await this.plugin.saveSettings(); }));
+
+		new Setting(containerEl).setName('Label Text Color (Dark Theme)').addColorPicker(c => c.setValue(this.plugin.settings.labelTextColorDark).onChange(async (v) => { this.plugin.settings.labelTextColorDark = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
+		new Setting(containerEl).setName('Label Text Color (Light Theme)').addColorPicker(c => c.setValue(this.plugin.settings.labelTextColorLight).onChange(async (v) => { this.plugin.settings.labelTextColorLight = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
+		new Setting(containerEl).setName('Label Background Color').addColorPicker(c => c.setValue(this.plugin.settings.labelBackgroundColor).onChange(async (v) => { this.plugin.settings.labelBackgroundColor = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
+		new Setting(containerEl).setName('Label Background Opacity').addSlider(s => s.setLimits(0, 1, 0.1).setValue(this.plugin.settings.labelBackgroundOpacity).setDynamicTooltip()
+			.onChange(async (v) => { this.plugin.settings.labelBackgroundOpacity = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
+
+		new Setting(containerEl).setName('Prevent label occlusion').addToggle(toggle => toggle.setValue(this.plugin.settings.labelOcclusion)
+			.onChange(async (value) => { this.plugin.settings.labelOcclusion = value; await this.plugin.saveSettings(); }));
 
 
 		new Setting(containerEl).setName('Interaction').setHeading();
-		new Setting(containerEl).setName("Zoom on click").setDesc("Automatically zoom in on a node when it's clicked.")
-			.addToggle(toggle => toggle.setValue(this.plugin.settings.zoomOnClick)
-				.onChange(async (value) => {this.plugin.settings.zoomOnClick = value; await this.plugin.saveSettings();}));
+		new Setting(containerEl).setName("Zoom on click").addToggle(toggle => toggle.setValue(this.plugin.settings.zoomOnClick)
+			.onChange(async (value) => {this.plugin.settings.zoomOnClick = value; await this.plugin.saveSettings();}));
 		new Setting(containerEl).setName('Rotation speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.rotateSpeed).setDynamicTooltip()
 			.onChange(async (v) => {this.plugin.settings.rotateSpeed = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateControls: true });}));
 		new Setting(containerEl).setName('Pan speed').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.panSpeed).setDynamicTooltip()
@@ -170,14 +209,11 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 			this.triggerUpdate({ redrawData: true, useCache: false, reheat: true });
 		};
 
-		new Setting(containerEl).setName('Center force').setDesc('How strongly nodes are pulled toward the center.')
-			.addSlider(s => s.setLimits(0, 1, 0.01).setValue(this.plugin.settings.centerForce).setDynamicTooltip()
-				.onChange(async (v) => { await forceSettingHandler(v, 'centerForce'); }));
-		new Setting(containerEl).setName('Repel force').setDesc('How strongly nodes push each other apart.')
-			.addSlider(s => s.setLimits(0, 20, 0.1).setValue(this.plugin.settings.repelForce).setDynamicTooltip()
-				.onChange(async (v) => { await forceSettingHandler(v, 'repelForce'); }));
-		new Setting(containerEl).setName('Link force').setDesc('How strongly links pull nodes together.')
-			.addSlider(s => s.setLimits(0, 0.1, 0.001).setValue(this.plugin.settings.linkForce).setDynamicTooltip()
-				.onChange(async (v) => { await forceSettingHandler(v, 'linkForce'); }));
+		new Setting(containerEl).setName('Center force').addSlider(s => s.setLimits(0, 1, 0.01).setValue(this.plugin.settings.centerForce).setDynamicTooltip()
+			.onChange(async (v) => { await forceSettingHandler(v, 'centerForce'); }));
+		new Setting(containerEl).setName('Repel force').addSlider(s => s.setLimits(0, 20, 0.1).setValue(this.plugin.settings.repelForce).setDynamicTooltip()
+			.onChange(async (v) => { await forceSettingHandler(v, 'repelForce'); }));
+		new Setting(containerEl).setName('Link force').addSlider(s => s.setLimits(0, 0.1, 0.001).setValue(this.plugin.settings.linkForce).setDynamicTooltip()
+			.onChange(async (v) => { await forceSettingHandler(v, 'linkForce'); }));
 	}
 }

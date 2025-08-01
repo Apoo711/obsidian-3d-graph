@@ -1,8 +1,16 @@
 import * as THREE from 'three';
 
-export interface GraphGroup {
+// Renamed from GraphGroup for clarity
+export interface ColorGroup {
 	query: string;
 	color: string;
+}
+
+// New type for the advanced filtering system
+export interface Filter {
+	type: 'path' | 'tag';
+	value: string;
+	inverted: boolean; // Added for NOT operator
 }
 
 export enum NodeShape { Sphere = 'Sphere', Cube = 'Cube', Pyramid = 'Pyramid', Tetrahedron = 'Tetrahedron' }
@@ -12,11 +20,12 @@ export interface Graph3DPluginSettings {
 	searchQuery: string;
 	showNeighboringNodes: boolean;
 	// Filters
+	filters: Filter[]; // New advanced filters
 	showAttachments: boolean;
 	hideOrphans: boolean;
 	showTags: boolean;
 	// Groups
-	groups: GraphGroup[];
+	groups: ColorGroup[]; // Renamed from GraphGroup
 	// Display
 	useThemeColors: boolean;
 	colorNode: string;
@@ -38,8 +47,11 @@ export interface Graph3DPluginSettings {
 	labelDistance: number;
 	labelFadeThreshold: number;
 	labelTextSize: number;
-	labelTextColor: string;
-	labelOcclusion: boolean; // Added for Phase 3
+	labelTextColorLight: string; // New theme-aware color
+	labelTextColorDark: string;  // New theme-aware color
+	labelBackgroundColor: string; // New background color
+	labelBackgroundOpacity: number; // New background opacity
+	labelOcclusion: boolean;
 	// Interaction
 	zoomOnClick: boolean;
 	rotateSpeed: number;
@@ -56,6 +68,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	searchQuery: '',
 	showNeighboringNodes: true,
 	// Filters
+	filters: [], // New advanced filters
 	showAttachments: false,
 	hideOrphans: false,
 	showTags: false,
@@ -82,8 +95,11 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	labelDistance: 150,
 	labelFadeThreshold: 0.8,
 	labelTextSize: 2.5,
-	labelTextColor: '#ffffff',
-	labelOcclusion: false, // Added for Phase 3
+	labelTextColorLight: '#000000', // Default for light theme
+	labelTextColorDark: '#ffffff',  // Default for dark theme
+	labelBackgroundColor: '#ffffff',
+	labelBackgroundOpacity: 0.3,
+	labelOcclusion: false,
 	// Interaction
 	zoomOnClick: true,
 	rotateSpeed: 1.0,
@@ -104,7 +120,7 @@ export interface GraphNode {
 	type: NodeType;
 	tags?: string[];
 	content?: string;
-	__threeObj?: THREE.Mesh;
+	__threeObj?: THREE.Object3D; // Note: Changed to Object3D to support Groups
 	x?: number;
 	y?: number;
 	z?: number;
