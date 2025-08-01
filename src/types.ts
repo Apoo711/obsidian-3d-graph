@@ -52,7 +52,7 @@ export interface Graph3DPluginSettings {
 	labelOcclusion: boolean;
 	// Interaction
 	useKeyboardControls: boolean;
-	keyboardMoveSpeed: number; // Added for keyboard speed control
+	keyboardMoveSpeed: number;
 	zoomOnClick: boolean;
 	rotateSpeed: number;
 	panSpeed: number;
@@ -102,7 +102,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	labelOcclusion: false,
 	// Interaction
 	useKeyboardControls: true,
-	keyboardMoveSpeed: 2.0, // Added for keyboard speed control
+	keyboardMoveSpeed: 2.0,
 	zoomOnClick: true,
 	rotateSpeed: 1.0,
 	panSpeed: 1.0,
@@ -126,6 +126,10 @@ export interface GraphNode {
 	x?: number;
 	y?: number;
 	z?: number;
+	// D3 Force properties for fixing node positions
+	fx?: number;
+	fy?: number;
+	fz?: number;
 }
 
 export interface GraphLink {

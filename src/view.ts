@@ -33,6 +33,7 @@ export class Graph3DView extends ItemView {
 	private highlightedNodes = new Set<string>();
 	private highlightedLinks = new Set<object>();
 	private selectedNode: string | null = null;
+	private hoveredNode: GraphNode | null = null;
 
 	private colorCache = new Map<string, string>();
 
@@ -72,7 +73,7 @@ export class Graph3DView extends ItemView {
 
 		const viewWrapper = rootContainer.createEl('div', { cls: 'graph-3d-view-wrapper' });
 
-		this.graphContainer = viewWrapper.createEl('div', { cls: 'graph-3d-container' });
+		this.graphContainer = viewWrapper.createEl('div', { cls: 'graph-3d-container', attr: { tabindex: '0' } }); // Make it focusable
 		this.messageEl = viewWrapper.createEl('div', { cls: 'graph-3d-message' });
 
 		this.addLocalControls();
@@ -86,8 +87,9 @@ export class Graph3DView extends ItemView {
 		});
 		this.resizeObserver.observe(this.graphContainer);
 
-		this.registerDomEvent(window, 'keydown', this.handleKeyDown.bind(this));
-		this.registerDomEvent(window, 'keyup', this.handleKeyUp.bind(this));
+		// Scoped event listeners
+		this.registerDomEvent(this.graphContainer, 'keydown', this.handleKeyDown.bind(this));
+		this.registerDomEvent(this.graphContainer, 'keyup', this.handleKeyUp.bind(this));
 	}
 
 	private addLocalControls() {
@@ -224,7 +226,6 @@ export class Graph3DView extends ItemView {
 						.onChange(async (value) => {
 							group.query = value;
 							await this.plugin.saveSettings();
-							this.updateDisplay();
 							this.updateColors();
 						}))
 					.addColorPicker(color => color
@@ -232,7 +233,6 @@ export class Graph3DView extends ItemView {
 						.onChange(async (value) => {
 							group.color = value;
 							await this.plugin.saveSettings();
-							this.updateDisplay();
 							this.updateColors();
 						}))
 					.addExtraButton(button => button
@@ -242,7 +242,6 @@ export class Graph3DView extends ItemView {
 							this.settings.groups.splice(index, 1);
 							await this.plugin.saveSettings();
 							render();
-							this.updateDisplay();
 							this.updateColors();
 						}));
 			});
@@ -265,7 +264,6 @@ export class Graph3DView extends ItemView {
 		const updateDisplayAndColors = async () => {
 			await this.plugin.saveSettings();
 			this.updateDisplay();
-			this.updateColors();
 		}
 
 		new Setting(container).setName('Node size').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.settings.nodeSize).setDynamicTooltip()
@@ -290,6 +288,7 @@ export class Graph3DView extends ItemView {
 
 		new Setting(container)
 			.setName('Show node labels')
+			.setDesc('If you enable this, please reopen the graph view to see the labels.')
 			.addToggle(toggle => toggle.setValue(this.settings.showNodeLabels)
 				.onChange(async (value) => {
 					this.settings.showNodeLabels = value;
@@ -299,7 +298,6 @@ export class Graph3DView extends ItemView {
 						this.graph.graphData().nodes.forEach((node: GraphNode) => this.cleanupNode(node, { cleanMesh: false, cleanGroup: false }));
 					}
 					this.updateDisplay();
-					this.updateColors();
 				}));
 
 		new Setting(container)
@@ -312,6 +310,7 @@ export class Graph3DView extends ItemView {
 
 		new Setting(container)
 			.setName('Prevent label occlusion')
+			.setDesc('Can impact performance on large graphs.')
 			.addToggle(toggle => toggle.setValue(this.settings.labelOcclusion)
 				.onChange(async (value) => {
 					this.settings.labelOcclusion = value;
@@ -434,7 +433,7 @@ export class Graph3DView extends ItemView {
 		camera.getWorldDirection(direction);
 
 		const right = new THREE.Vector3();
-		right.crossVectors(camera.up, direction).normalize();
+		right.crossVectors(direction, camera.up).normalize();
 
 		const moveVector = new THREE.Vector3();
 
@@ -730,8 +729,12 @@ export class Graph3DView extends ItemView {
 
 	public updateDisplay() {
 		if (!this.isGraphInitialized) return;
+		// This function is now only for things that require a full object recreation
 		this.graph
-			.nodeThreeObject((node: GraphNode) => this.createNodeObject(node))
+			.nodeThreeObject((node: GraphNode) => this.createNodeObject(node));
+
+		// These are now updated dynamically without a full redraw
+		this.graph
 			.linkWidth((link: GraphLink) => this.highlightedLinks.has(link) ? (this.settings.linkThickness * 2) : this.settings.linkThickness)
 			.linkDirectionalParticles((link: GraphLink) => this.highlightedLinks.has(link) ? 4 : 0)
 			.linkDirectionalParticleWidth(2);
@@ -942,10 +945,24 @@ export class Graph3DView extends ItemView {
 			}
 		}
 		this.updateColors();
-		this.updateDisplay();
+		this.graph.linkWidth(this.graph.linkWidth());
+		this.graph.linkDirectionalParticles(this.graph.linkDirectionalParticles());
 	}
 
 	private handleNodeHover(node: GraphNode | null) {
+		if (this.hoveredNode && this.hoveredNode !== node) {
+			this.hoveredNode.fx = undefined;
+			this.hoveredNode.fy = undefined;
+			this.hoveredNode.fz = undefined;
+		}
+
+		this.hoveredNode = node;
+		if (this.hoveredNode) {
+			this.hoveredNode.fx = this.hoveredNode.x;
+			this.hoveredNode.fy = this.hoveredNode.y;
+			this.hoveredNode.fz = this.hoveredNode.z;
+		}
+
 		this.highlightedNodes.clear();
 		this.highlightedLinks.clear();
 
@@ -958,7 +975,8 @@ export class Graph3DView extends ItemView {
 			});
 		}
 		this.updateColors();
-		this.updateDisplay();
+		this.graph.linkWidth(this.graph.linkWidth());
+		this.graph.linkDirectionalParticles(this.graph.linkDirectionalParticles());
 	}
 
 	private getLinkCurvature(link: ProcessedGraphLink) {
