@@ -8,6 +8,12 @@ import { Graph3DPluginSettings, GraphNode, GraphLink, NodeShape, NodeType, Filte
 
 export const VIEW_TYPE_3D_GRAPH = "3d-graph-view";
 
+// Define a more specific type for links once they are processed by the graph engine
+interface ProcessedGraphLink {
+	source: GraphNode;
+	target: GraphNode;
+}
+
 export class Graph3DView extends ItemView {
 	private graph: any;
 	private plugin: Graph3DPlugin;
@@ -434,8 +440,8 @@ export class Graph3DView extends ItemView {
 
 		if (this.pressedKeys.has('w')) moveVector.add(direction);
 		if (this.pressedKeys.has('s')) moveVector.sub(direction);
-		if (this.pressedKeys.has('a')) moveVector.sub(right); // Corrected from add
-		if (this.pressedKeys.has('d')) moveVector.add(right); // Corrected from sub
+		if (this.pressedKeys.has('a')) moveVector.sub(right);
+		if (this.pressedKeys.has('d')) moveVector.add(right);
 
 		if (moveVector.lengthSq() > 0) {
 			moveVector.normalize().multiplyScalar(moveSpeed);
@@ -468,7 +474,7 @@ export class Graph3DView extends ItemView {
 			this.graph = Graph()(this.graphContainer)
 				.onNodeClick((node: GraphNode, event: MouseEvent) => this.handleNodeClick(node, event))
 				.onNodeHover((node: GraphNode | null) => this.handleNodeHover(node))
-				.linkCurvature(link => this.getLinkCurvature(link))
+				.linkCurvature((link: ProcessedGraphLink) => this.getLinkCurvature(link))
 				.onEngineTick(() => {
 					const now = performance.now();
 					if (now - this.lastLabelUpdateTime > this.LABEL_UPDATE_INTERVAL) {
@@ -915,15 +921,12 @@ export class Graph3DView extends ItemView {
 
 			const allLinks = this.graph.graphData().links;
 
-			allLinks.forEach((link: GraphLink) => {
-				const sourceId = typeof link.source === 'object' ? (link.source as GraphNode).id : link.source;
-				const targetId = typeof link.target === 'object' ? (link.target as GraphNode).id : link.target;
-
-				if (sourceId === node.id) {
-					this.highlightedNodes.add(targetId);
+			allLinks.forEach((link: ProcessedGraphLink) => {
+				if (link.source.id === node.id) {
+					this.highlightedNodes.add(link.target.id);
 					this.highlightedLinks.add(link);
-				} else if (targetId === node.id) {
-					this.highlightedNodes.add(sourceId);
+				} else if (link.target.id === node.id) {
+					this.highlightedNodes.add(link.source.id);
 					this.highlightedLinks.add(link);
 				}
 			});
@@ -948,7 +951,7 @@ export class Graph3DView extends ItemView {
 
 		if (node) {
 			this.highlightedNodes.add(node.id);
-			this.graph.graphData().links.forEach((link: any) => {
+			this.graph.graphData().links.forEach((link: ProcessedGraphLink) => {
 				if (link.source.id === node.id || link.target.id === node.id) {
 					this.highlightedLinks.add(link);
 				}
@@ -958,9 +961,9 @@ export class Graph3DView extends ItemView {
 		this.updateDisplay();
 	}
 
-	private getLinkCurvature(link: any) {
+	private getLinkCurvature(link: ProcessedGraphLink) {
 		const allLinks = this.graph.graphData().links;
-		const hasReciprocal = allLinks.some((l: any) => l.source.id === link.target.id && l.target.id === link.source.id);
+		const hasReciprocal = allLinks.some((l: ProcessedGraphLink) => l.source.id === link.target.id && l.target.id === link.source.id);
 		if (hasReciprocal) {
 			return link.source.id > link.target.id ? 0.2 : -0.2;
 		}
