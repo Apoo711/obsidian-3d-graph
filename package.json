@@ -1,6 +1,6 @@
 {
 	"name": "3D Graph Plugin",
-	"version": "2.4.0",
+	"version": "2.4.1",
 	"description": "Visualize your vault in 3D with a powerful, highly customizable, and filterable graph.",
 	"main": "main.js",
 	"scripts": {
