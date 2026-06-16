@@ -8,7 +8,7 @@ export interface ColorGroup {
 export interface Filter {
 	type: 'path' | 'tag';
 	value: string;
-	inverted: boolean;
+	enabled: boolean;
 }
 
 export enum NodeShape { Sphere = 'Sphere', Cube = 'Cube', Pyramid = 'Pyramid', Tetrahedron = 'Tetrahedron' }
@@ -42,6 +42,7 @@ export interface Graph3DPluginSettings {
 	attachmentShape: NodeShape;
 	// Labels
 	showNodeLabels: boolean;
+	showLabelsOnHoverOnly: boolean;
 	labelDistance: number;
 	labelFadeThreshold: number;
 	labelTextSize: number;
@@ -92,6 +93,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	attachmentShape: NodeShape.Cube,
 	// Labels
 	showNodeLabels: true,
+	showLabelsOnHoverOnly: false,
 	labelDistance: 150,
 	labelFadeThreshold: 0.8,
 	labelTextSize: 2.5,

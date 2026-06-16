@@ -1,5 +1,5 @@
 // src/view.ts
-import { ItemView, WorkspaceLeaf, TFile, Setting, setIcon, debounce } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, Setting, setIcon, debounce, getAllTags } from 'obsidian';
 import ForceGraph3D from '3d-force-graph';
 import * as THREE from 'three';
 import SpriteText from 'three-spritetext';
@@ -57,10 +57,51 @@ export class Graph3DView extends ItemView {
 	// Keyboard controls state
 	private pressedKeys = new Set<string>();
 
+	private fileContentCache = new Map<string, { mtime: number, content: string }>();
+	private frustum = new THREE.Frustum();
+	private projScreenMatrix = new THREE.Matrix4();
+	private geometryCache = new Map<NodeShape, THREE.BufferGeometry>();
+	private materialCache = new Map<string, THREE.MeshLambertMaterial>();
+	private controlsListenerAdded = false;
+
 	constructor(leaf: WorkspaceLeaf, plugin: Graph3DPlugin) {
 		super(leaf);
 		this.plugin = plugin;
 		this.settings = plugin.settings;
+	}
+
+	private getSharedGeometry(shape: NodeShape): THREE.BufferGeometry {
+		let geometry = this.geometryCache.get(shape);
+		if (!geometry) {
+			switch (shape) {
+				case NodeShape.Cube: geometry = new THREE.BoxGeometry(1, 1, 1); break;
+				case NodeShape.Pyramid: geometry = new THREE.ConeGeometry(1 / 1.5, 1, 4); break;
+				case NodeShape.Tetrahedron: geometry = new THREE.TetrahedronGeometry(1 / 1.2); break;
+				default: geometry = new THREE.SphereGeometry(0.5);
+			}
+			this.geometryCache.set(shape, geometry);
+		}
+		return geometry;
+	}
+
+	private getSharedMaterial(color: string): THREE.MeshLambertMaterial {
+		let material = this.materialCache.get(color);
+		if (!material) {
+			material = new THREE.MeshLambertMaterial({
+				color: color,
+				transparent: true,
+				opacity: 0.9
+			});
+			this.materialCache.set(color, material);
+		}
+		return material;
+	}
+
+	private clearResourceCaches() {
+		this.geometryCache.forEach(g => g.dispose());
+		this.geometryCache.clear();
+		this.materialCache.forEach(m => m.dispose());
+		this.materialCache.clear();
 	}
 
 	getViewType() { return VIEW_TYPE_3D_GRAPH; }
@@ -94,6 +135,17 @@ export class Graph3DView extends ItemView {
 
 	private addLocalControls() {
 		const controlsContainer = this.contentEl.createEl('div', { cls: 'graph-3d-controls-container' });
+
+		// Add Reset View button
+		const resetViewButton = controlsContainer.createEl('div', { cls: 'graph-3d-reset-toggle' });
+		setIcon(resetViewButton, 'refresh-cw');
+		resetViewButton.setAttribute('aria-label', 'Reset view');
+		resetViewButton.addEventListener('click', () => {
+			if (this.graph && this.isGraphInitialized) {
+				this.graph.zoomToFit(800);
+			}
+		});
+
 		this.settingsToggleButton = controlsContainer.createEl('div', { cls: 'graph-3d-settings-toggle' });
 		setIcon(this.settingsToggleButton, 'settings');
 		this.settingsToggleButton.setAttribute('aria-label', 'Graph settings');
@@ -141,9 +193,8 @@ export class Graph3DView extends ItemView {
 				.addDropdown(dropdown => dropdown
 					.addOption('path', 'Path')
 					.addOption('tag', 'Tag')
-					.setValue(filter.type)
-					.onChange(async (value: 'path' | 'tag') => {
-						filter.type = value;
+					.onChange(async (value: string) => {
+						filter.type = value as 'path' | 'tag';
 						await this.plugin.saveSettings();
 						this.updateData({ useCache: true });
 					}))
@@ -155,14 +206,15 @@ export class Graph3DView extends ItemView {
 						await this.plugin.saveSettings();
 						this.updateData({ useCache: true });
 					}, 500, true)))
-				.addToggle(toggle => toggle
-					.setTooltip("Invert filter (NOT)")
-					.setValue(filter.inverted)
-					.onChange(async (value) => {
-						filter.inverted = value;
-						await this.plugin.saveSettings();
-						this.updateData({ useCache: true });
-					}))
+				.addToggle(toggle => {
+					toggle.setTooltip("Enable/Disable filter")
+						.setValue(filter.enabled)
+						.onChange(async (value) => {
+							filter.enabled = value;
+							await this.plugin.saveSettings();
+							this.updateData({ useCache: true });
+						});
+				})
 				.addExtraButton(button => button
 					.setIcon('cross')
 					.setTooltip('Remove filter')
@@ -178,7 +230,7 @@ export class Graph3DView extends ItemView {
 			.addButton(button => button
 				.setButtonText('Add new filter')
 				.onClick(async () => {
-					this.settings.filters.push({ type: 'path', value: '', inverted: false });
+					this.settings.filters.push({ type: 'path', value: '', enabled: true });
 					await this.plugin.saveSettings();
 					this.renderSettingsPanel();
 				}));
@@ -276,11 +328,11 @@ export class Graph3DView extends ItemView {
 			.onChange(async (v) => { this.settings.linkThickness = v; await updateDisplayAndColors(); }));
 
 		new Setting(container).setName('Node shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.settings.nodeShape)
-			.onChange(async(value: NodeShape) => {this.settings.nodeShape = value; await updateDisplayAndColors()}));
+			.onChange(async(value: string) => {this.settings.nodeShape = value as NodeShape; await updateDisplayAndColors()}));
 		new Setting(container).setName('Tag shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.settings.tagShape)
-			.onChange(async(value: NodeShape) => {this.settings.tagShape = value; await updateDisplayAndColors()}));
+			.onChange(async(value: string) => {this.settings.tagShape = value as NodeShape; await updateDisplayAndColors()}));
 		new Setting(container).setName('Attachment shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.settings.attachmentShape)
-			.onChange(async(value: NodeShape) => {this.settings.attachmentShape = value; await updateDisplayAndColors()}));
+			.onChange(async(value: string) => {this.settings.attachmentShape = value as NodeShape; await updateDisplayAndColors()}));
 	}
 
 	private renderLabelSettings(container: HTMLElement) {
@@ -297,6 +349,15 @@ export class Graph3DView extends ItemView {
 					if (!value) {
 						this.graph.graphData().nodes.forEach((node: GraphNode) => this.cleanupNode(node, { cleanMesh: false, cleanGroup: false }));
 					}
+					this.updateDisplay();
+				}));
+
+		new Setting(container)
+			.setName('Show labels on hover/highlight only')
+			.addToggle(toggle => toggle.setValue(this.settings.showLabelsOnHoverOnly)
+				.onChange(async (value) => {
+					this.settings.showLabelsOnHoverOnly = value;
+					await this.plugin.saveSettings();
 					this.updateDisplay();
 				}));
 
@@ -471,6 +532,19 @@ export class Graph3DView extends ItemView {
 
 			const Graph = (ForceGraph3D as any).default || ForceGraph3D;
 			this.graph = Graph()(this.graphContainer)
+				.enableNodeDrag(true)
+				.onNodeDrag((node: GraphNode) => {
+					const controls = this.graph.controls();
+					if (controls) {
+						controls.enabled = false;
+					}
+				})
+				.onNodeDragEnd((node: GraphNode) => {
+					const controls = this.graph.controls();
+					if (controls) {
+						controls.enabled = true;
+					}
+				})
 				.onNodeClick((node: GraphNode, event: MouseEvent) => this.handleNodeClick(node, event))
 				.onNodeHover((node: GraphNode | null) => this.handleNodeHover(node))
 				.linkCurvature((link: ProcessedGraphLink) => this.getLinkCurvature(link))
@@ -580,22 +654,13 @@ export class Graph3DView extends ItemView {
 
 				this.graph.resumeAnimation();
 			} else {
-				if (this.graph && typeof this.graph._destructor === 'function') {
-					this.graph._destructor();
-				}
-				const Graph = (ForceGraph3D as any).default || ForceGraph3D;
-				this.graph = Graph()(this.graphContainer)
-					.onNodeClick((node: GraphNode) => this.handleNodeClick(node))
-					.graphData({ nodes: [], links: [] });
-
-				this.initializeForces();
-
+				this.graph.graphData({ nodes: [], links: [] });
 				this.colorCache.clear();
 				const bgColor = this.settings.useThemeColors
 					? this.getCssColor('--background-primary', '#000000')
 					: this.settings.backgroundColor;
 				this.graph.backgroundColor(bgColor);
-				this.messageEl.setText("No search results found.");
+				this.messageEl.setText("No search results or filters matched.");
 				this.messageEl.addClass('is-visible');
 				this.graph.pauseAnimation();
 			}
@@ -616,14 +681,10 @@ export class Graph3DView extends ItemView {
 
 		this.graph.graphData().nodes.forEach((node: GraphNode) => {
 			const mesh = this.nodeMeshes.get(node);
-			if (mesh && mesh.material) {
+			if (mesh) {
 				const color = this.getNodeColor(node);
 				if (color) {
-					try {
-						(mesh.material as THREE.MeshLambertMaterial).color.set(color);
-					} catch (e) {
-						console.error(`3D Graph: Invalid color '${color}' for node`, node, e);
-					}
+					mesh.material = this.getSharedMaterial(color);
 				}
 			}
 		});
@@ -758,31 +819,13 @@ export class Graph3DView extends ItemView {
 			default: shape = this.settings.nodeShape; size = this.settings.nodeSize;
 		}
 
-		let geometry: THREE.BufferGeometry;
+		const geometry = this.getSharedGeometry(shape);
 		const s = size * 1.5;
 
-		switch (shape) {
-			case NodeShape.Cube: geometry = new THREE.BoxGeometry(s, s, s); break;
-			case NodeShape.Pyramid: geometry = new THREE.ConeGeometry(s / 1.5, s, 4); break;
-			case NodeShape.Tetrahedron: geometry = new THREE.TetrahedronGeometry(s / 1.2); break;
-			default: geometry = new THREE.SphereGeometry(s / 2);
-		}
-
 		const color = this.getNodeColor(node);
-		const material = new THREE.MeshLambertMaterial({
-			color: '#ffffff',
-			transparent: true,
-			opacity: 0.9
-		});
+		const mesh = new THREE.Mesh(geometry, this.getSharedMaterial(color));
+		mesh.scale.set(s, s, s);
 
-		try {
-			material.color.set(color);
-		} catch (e) {
-			console.error(`3D Graph: Could not set material color to '${color}'`, e);
-			material.color.set(this.settings.colorNode);
-		}
-
-		const mesh = new THREE.Mesh(geometry, material);
 		this.nodeMeshes.set(node, mesh);
 		group.add(mesh);
 
@@ -824,6 +867,10 @@ export class Graph3DView extends ItemView {
 			controls.rotateSpeed = rotateSpeed;
 			controls.panSpeed = panSpeed;
 			controls.zoomSpeed = zoomSpeed;
+			if (!this.controlsListenerAdded) {
+				controls.addEventListener('change', () => this.updateLabels());
+				this.controlsListenerAdded = true;
+			}
 		}
 	}
 
@@ -835,22 +882,40 @@ export class Graph3DView extends ItemView {
 
 		if (!nodes || !camera) return;
 
+		this.projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+		this.frustum.setFromProjectionMatrix(this.projScreenMatrix);
+
 		if (this.settings.labelOcclusion && this.occludersCacheDirty) {
 			this.cachedOccluders = nodes.map((n: GraphNode) => this.nodeMeshes.get(n)).filter(Boolean) as THREE.Mesh[];
 			this.occludersCacheDirty = false;
 		}
 
+		const raycastCullDistanceSq = this.RAYCAST_CULL_DISTANCE * this.RAYCAST_CULL_DISTANCE;
 		const relevantOccluders = this.settings.labelOcclusion
-			? this.cachedOccluders.filter(mesh => camera.position.distanceTo(mesh.position) < this.RAYCAST_CULL_DISTANCE)
+			? this.cachedOccluders.filter(mesh => camera.position.distanceToSquared(mesh.position) < raycastCullDistanceSq)
 			: [];
 
 		nodes.forEach((node: GraphNode) => {
 			const sprite = this.nodeSprites.get(node);
 			if (!sprite) return;
 
+			if (this.settings.showLabelsOnHoverOnly) {
+				const isHovered = this.hoveredNode && this.hoveredNode.id === node.id;
+				const isHighlighted = this.highlightedNodes.has(node.id);
+				if (!isHovered && !isHighlighted) {
+					sprite.visible = false;
+					return;
+				}
+			}
+
 			if (node.__threeObj) {
 				node.__threeObj.getWorldPosition(this.reusableNodePosition);
 			} else {
+				sprite.visible = false;
+				return;
+			}
+
+			if (!this.frustum.containsPoint(this.reusableNodePosition)) {
 				sprite.visible = false;
 				return;
 			}
@@ -947,6 +1012,7 @@ export class Graph3DView extends ItemView {
 		this.updateColors();
 		this.graph.linkWidth(this.graph.linkWidth());
 		this.graph.linkDirectionalParticles(this.graph.linkDirectionalParticles());
+		this.updateLabels();
 	}
 
 	private handleNodeHover(node: GraphNode | null) {
@@ -977,6 +1043,7 @@ export class Graph3DView extends ItemView {
 		this.updateColors();
 		this.graph.linkWidth(this.graph.linkWidth());
 		this.graph.linkDirectionalParticles(this.graph.linkDirectionalParticles());
+		this.updateLabels();
 	}
 
 	private getLinkCurvature(link: ProcessedGraphLink) {
@@ -997,6 +1064,9 @@ export class Graph3DView extends ItemView {
 		}
 		if (filter.type === 'tag') {
 			const tagToMatch = filterValue.startsWith('#') ? filterValue.substring(1) : filterValue;
+			if (node.type === NodeType.Tag) {
+				return node.name.toLowerCase() === `#${tagToMatch}`;
+			}
 			return node.tags?.some(tag => tag.toLowerCase() === tagToMatch) ?? false;
 		}
 		return false;
@@ -1010,14 +1080,25 @@ export class Graph3DView extends ItemView {
 
 		const allNodesMap = new Map<string, GraphNode>();
 
+		const needsContent = !!searchQuery || this.settings.groups.some(g => {
+			const q = g.query.toLowerCase();
+			return q && !q.startsWith('path:') && !q.startsWith('tag:') && !q.startsWith('file:');
+		});
+
 		for (const file of allFiles) {
 			const cache = this.app.metadataCache.getFileCache(file);
-			const tags = cache?.tags?.map(t => t.tag.substring(1)) || [];
+			const tags = cache ? (getAllTags(cache) || []).map(t => t.startsWith('#') ? t.substring(1) : t) : [];
 			const type = file.extension === 'md' ? NodeType.File : NodeType.Attachment;
 
 			let content = '';
-			if (type === NodeType.File) {
-				content = await this.app.vault.cachedRead(file);
+			if (type === NodeType.File && needsContent) {
+				const cached = this.fileContentCache.get(file.path);
+				if (cached && cached.mtime === file.stat.mtime) {
+					content = cached.content;
+				} else {
+					content = await this.app.vault.cachedRead(file);
+					this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content });
+				}
 			}
 
 			allNodesMap.set(file.path, { id: file.path, name: file.basename, filename: file.name, type, tags, content });
@@ -1025,9 +1106,29 @@ export class Graph3DView extends ItemView {
 
 
 		const allLinks: { source: string, target: string }[] = [];
+		const existingLinks = new Set<string>();
+
 		for (const sourcePath in resolvedLinks) {
 			for (const targetPath in resolvedLinks[sourcePath]) {
 				allLinks.push({ source: sourcePath, target: targetPath });
+				existingLinks.add(`${sourcePath}->${targetPath}`);
+			}
+		}
+
+		// Also extract links from frontmatter properties (Properties section)
+		for (const file of allFiles) {
+			const cache = this.app.metadataCache.getFileCache(file);
+			if (cache?.frontmatterLinks) {
+				for (const linkCache of cache.frontmatterLinks) {
+					const destFile = this.app.metadataCache.getFirstLinkpathDest(linkCache.link, file.path);
+					if (destFile) {
+						const linkKey = `${file.path}->${destFile.path}`;
+						if (!existingLinks.has(linkKey)) {
+							allLinks.push({ source: file.path, target: destFile.path });
+							existingLinks.add(linkKey);
+						}
+					}
+				}
 			}
 		}
 
@@ -1050,12 +1151,11 @@ export class Graph3DView extends ItemView {
 		let finalNodes = Array.from(allNodesMap.values());
 
 		// Advanced Filtering Logic
-		const positiveFilters = filters.filter(f => !f.inverted && f.value.trim() !== '');
-		const negativeFilters = filters.filter(f => f.inverted && f.value.trim() !== '');
+		const activeFilters = filters.filter(f => f.enabled && f.value.trim() !== '');
 
-		if (positiveFilters.length > 0) {
+		if (activeFilters.length > 0) {
 			const nodesToKeep = new Set<GraphNode>();
-			positiveFilters.forEach(filter => {
+			activeFilters.forEach(filter => {
 				finalNodes.forEach(node => {
 					if (this.matchesFilter(node, filter)) {
 						nodesToKeep.add(node);
@@ -1063,12 +1163,6 @@ export class Graph3DView extends ItemView {
 				});
 			});
 			finalNodes = Array.from(nodesToKeep);
-		}
-
-		if (negativeFilters.length > 0) {
-			finalNodes = finalNodes.filter(node => {
-				return !negativeFilters.some(filter => this.matchesFilter(node, filter));
-			});
 		}
 
 
@@ -1111,12 +1205,7 @@ export class Graph3DView extends ItemView {
 
 	private cleanupNode(node: GraphNode, options: { cleanMesh?: boolean, cleanGroup?: boolean } = { cleanMesh: true, cleanGroup: true }) {
 		if (options.cleanMesh) {
-			const mesh = this.nodeMeshes.get(node);
-			if (mesh) {
-				mesh.geometry?.dispose();
-				(mesh.material as THREE.Material)?.dispose();
-				this.nodeMeshes.delete(node);
-			}
+			this.nodeMeshes.delete(node);
 		}
 
 		const sprite = this.nodeSprites.get(node);
@@ -1152,5 +1241,7 @@ export class Graph3DView extends ItemView {
 		if (this.messageEl) {
 			this.messageEl.remove();
 		}
+		this.clearResourceCaches();
+		this.controlsListenerAdded = false;
 	}
 }

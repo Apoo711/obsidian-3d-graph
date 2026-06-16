@@ -52,8 +52,8 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 					.addOption('path', 'Path')
 					.addOption('tag', 'Tag')
 					.setValue(filter.type)
-					.onChange(async (value: 'path' | 'tag') => {
-						filter.type = value;
+					.onChange(async (value: string) => {
+						filter.type = value as 'path' | 'tag';
 						await this.plugin.saveSettings();
 						this.triggerUpdate({ redrawData: true, useCache: true });
 					}))
@@ -65,14 +65,15 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						this.triggerUpdate({ redrawData: true, useCache: true });
 					}, 500, true)))
-				.addToggle(toggle => toggle
-					.setTooltip("Invert filter (NOT)")
-					.setValue(filter.inverted)
-					.onChange(async (value) => {
-						filter.inverted = value;
-						await this.plugin.saveSettings();
-						this.triggerUpdate({ redrawData: true, useCache: true });
-					}))
+				.addToggle(toggle => {
+					toggle.setTooltip("Enable/Disable filter")
+						.setValue(filter.enabled)
+						.onChange(async (value) => {
+							filter.enabled = value;
+							await this.plugin.saveSettings();
+							this.triggerUpdate({ redrawData: true, useCache: true });
+						});
+				})
 				.addExtraButton(button => button
 					.setIcon('cross')
 					.setTooltip('Remove filter')
@@ -88,7 +89,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 			.addButton(button => button
 				.setButtonText('Add new filter')
 				.onClick(async () => {
-					this.plugin.settings.filters.push({ type: 'path', value: '', inverted: false });
+					this.plugin.settings.filters.push({ type: 'path', value: '', enabled: true });
 					await this.plugin.saveSettings();
 					this.display();
 				}));
@@ -158,11 +159,11 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 
 		new Setting(containerEl).setName('Appearance').setHeading();
 		new Setting(containerEl).setName('Node shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.plugin.settings.nodeShape)
-			.onChange(async(value: NodeShape) => {this.plugin.settings.nodeShape = value; await this.plugin.saveSettings(); this.triggerUpdate({updateDisplay: true})}));
+			.onChange(async(value: string) => {this.plugin.settings.nodeShape = value as NodeShape; await this.plugin.saveSettings(); this.triggerUpdate({updateDisplay: true})}));
 		new Setting(containerEl).setName('Tag shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.plugin.settings.tagShape)
-			.onChange(async(value: NodeShape) => {this.plugin.settings.tagShape = value; await this.plugin.saveSettings(); this.triggerUpdate({updateDisplay: true})}));
+			.onChange(async(value: string) => {this.plugin.settings.tagShape = value as NodeShape; await this.plugin.saveSettings(); this.triggerUpdate({updateDisplay: true})}));
 		new Setting(containerEl).setName('Attachment shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.plugin.settings.attachmentShape)
-			.onChange(async(value: NodeShape) => {this.plugin.settings.attachmentShape = value; await this.plugin.saveSettings(); this.triggerUpdate({updateDisplay: true})}));
+			.onChange(async(value: string) => {this.plugin.settings.attachmentShape = value as NodeShape; await this.plugin.saveSettings(); this.triggerUpdate({updateDisplay: true})}));
 		new Setting(containerEl).setName('Node size').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.nodeSize).setDynamicTooltip()
 			.onChange(async (v) => { this.plugin.settings.nodeSize = v; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
 		new Setting(containerEl).setName('Tag node size').addSlider(s => s.setLimits(0.1, 5, 0.1).setValue(this.plugin.settings.tagNodeSize).setDynamicTooltip()
@@ -175,6 +176,8 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 		new Setting(containerEl).setName('Labels').setHeading();
 		new Setting(containerEl).setName('Show node labels').addToggle(toggle => toggle.setValue(this.plugin.settings.showNodeLabels)
 			.onChange(async (value) => { this.plugin.settings.showNodeLabels = value; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
+		new Setting(containerEl).setName('Show labels on hover/highlight only').addToggle(toggle => toggle.setValue(this.plugin.settings.showLabelsOnHoverOnly)
+			.onChange(async (value) => { this.plugin.settings.showLabelsOnHoverOnly = value; await this.plugin.saveSettings(); this.triggerUpdate({ updateDisplay: true }); }));
 		new Setting(containerEl).setName('Label distance').addSlider(s => s.setLimits(50, 500, 10).setValue(this.plugin.settings.labelDistance).setDynamicTooltip()
 			.onChange(async (v) => { this.plugin.settings.labelDistance = v; await this.plugin.saveSettings(); }));
 		new Setting(containerEl).setName('Label fade threshold').addSlider(s => s.setLimits(0.1, 1, 0.1).setValue(this.plugin.settings.labelFadeThreshold).setDynamicTooltip()
