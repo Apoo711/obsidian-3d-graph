@@ -22,7 +22,7 @@ export default class Graph3DPlugin extends Plugin {
 		});
 
 		// Debounced update for live changes in the vault
-		const debouncedUpdate = debounce(() => this.triggerLiveUpdate(), 300, true);
+		const debouncedUpdate = debounce(() => this.triggerLiveUpdate(), 300, false);
 		this.registerEvent(this.app.vault.on('create', debouncedUpdate));
 		this.registerEvent(this.app.vault.on('delete', debouncedUpdate));
 		this.registerEvent(this.app.vault.on('modify', debouncedUpdate));
@@ -45,6 +45,11 @@ export default class Graph3DPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		this.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH).forEach(leaf => {
+			if (leaf.view instanceof Graph3DView) {
+				leaf.view.setGroupsDirty();
+			}
+		});
 	}
 
 	async activateView() {

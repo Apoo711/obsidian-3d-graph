@@ -68,7 +68,21 @@ export class Graph3DView extends ItemView {
 	private pressedKeys = new Set<string>();
 
 	private fileContentCache = new Map<string, { mtime: number, content: string, lowerCaseContent: string }>();
+	private processedNodes = new Map<string, { node: GraphNode, mtime: number }>();
+	private nodeMap = new Map<string, GraphNode>();
+	private reciprocalLinks = new Set<string>();
+	private linkAdjacencyIndex = new Map<string, ProcessedGraphLink[]>();
+	private lastHighlightedNodes = new Set<string>();
 	private preprocessedGroups: PreprocessedGroup[] = [];
+	private groupsDirty = true;
+
+	// Reusable Vector3 variables to avoid GC pressure in keyboard handler
+	private keyboardDirection = new THREE.Vector3();
+	private keyboardRight = new THREE.Vector3();
+	private keyboardMoveVector = new THREE.Vector3();
+	private keyboardNewPos = new THREE.Vector3();
+	private keyboardNewTarget = new THREE.Vector3();
+
 	private frustum = new THREE.Frustum();
 	private projScreenMatrix = new THREE.Matrix4();
 	private geometryCache = new Map<NodeShape, THREE.BufferGeometry>();
@@ -142,6 +156,13 @@ export class Graph3DView extends ItemView {
 		// Scoped event listeners
 		this.registerDomEvent(this.graphContainer, 'keydown', this.handleKeyDown.bind(this));
 		this.registerDomEvent(this.graphContainer, 'keyup', this.handleKeyUp.bind(this));
+
+		this.registerEvent(this.app.workspace.on('css-change', () => {
+			this.colorCache.clear();
+			if (this.isGraphInitialized) {
+				this.updateColors();
+			}
+		}));
 	}
 
 	private addLocalControls() {
@@ -501,39 +522,37 @@ export class Graph3DView extends ItemView {
 		if (!controls || !camera) return;
 
 		const moveSpeed = this.settings.keyboardMoveSpeed;
-		const direction = new THREE.Vector3();
-		camera.getWorldDirection(direction);
+		camera.getWorldDirection(this.keyboardDirection);
 
-		const right = new THREE.Vector3();
-		right.crossVectors(direction, camera.up).normalize();
+		this.keyboardRight.crossVectors(this.keyboardDirection, camera.up).normalize();
 
-		const moveVector = new THREE.Vector3();
+		this.keyboardMoveVector.set(0, 0, 0);
 
-		if (this.pressedKeys.has('w')) moveVector.add(direction);
-		if (this.pressedKeys.has('s')) moveVector.sub(direction);
-		if (this.pressedKeys.has('a')) moveVector.sub(right);
-		if (this.pressedKeys.has('d')) moveVector.add(right);
+		if (this.pressedKeys.has('w')) this.keyboardMoveVector.add(this.keyboardDirection);
+		if (this.pressedKeys.has('s')) this.keyboardMoveVector.sub(this.keyboardDirection);
+		if (this.pressedKeys.has('a')) this.keyboardMoveVector.sub(this.keyboardRight);
+		if (this.pressedKeys.has('d')) this.keyboardMoveVector.add(this.keyboardRight);
 
-		if (moveVector.lengthSq() > 0) {
-			moveVector.normalize().multiplyScalar(moveSpeed);
-			const newPos = new THREE.Vector3().copy(camera.position).add(moveVector);
-			const newTarget = new THREE.Vector3().copy(controls.target).add(moveVector);
-			this.graph.cameraPosition(newPos, newTarget);
+		if (this.keyboardMoveVector.lengthSq() > 0) {
+			this.keyboardMoveVector.normalize().multiplyScalar(moveSpeed);
+			this.keyboardNewPos.copy(camera.position).add(this.keyboardMoveVector);
+			this.keyboardNewTarget.copy(controls.target).add(this.keyboardMoveVector);
+			this.graph.cameraPosition(this.keyboardNewPos, this.keyboardNewTarget);
 		}
 
 		if (this.pressedKeys.has('e')) {
-			const newPos = new THREE.Vector3().copy(camera.position);
-			newPos.y += moveSpeed;
-			const newTarget = new THREE.Vector3().copy(controls.target);
-			newTarget.y += moveSpeed;
-			this.graph.cameraPosition(newPos, newTarget);
+			this.keyboardNewPos.copy(camera.position);
+			this.keyboardNewPos.y += moveSpeed;
+			this.keyboardNewTarget.copy(controls.target);
+			this.keyboardNewTarget.y += moveSpeed;
+			this.graph.cameraPosition(this.keyboardNewPos, this.keyboardNewTarget);
 		}
 		if (this.pressedKeys.has('q')) {
-			const newPos = new THREE.Vector3().copy(camera.position);
-			newPos.y -= moveSpeed;
-			const newTarget = new THREE.Vector3().copy(controls.target);
-			newTarget.y -= moveSpeed;
-			this.graph.cameraPosition(newPos, newTarget);
+			this.keyboardNewPos.copy(camera.position);
+			this.keyboardNewPos.y -= moveSpeed;
+			this.keyboardNewTarget.copy(controls.target);
+			this.keyboardNewTarget.y -= moveSpeed;
+			this.graph.cameraPosition(this.keyboardNewPos, this.keyboardNewTarget);
 		}
 	}
 
@@ -648,8 +667,45 @@ export class Graph3DView extends ItemView {
 
 				this.graph.pauseAnimation();
 				this.messageEl.removeClass('is-visible');
+
+				// Pre-compute reciprocal links for curvature O(1) checks
+				this.reciprocalLinks.clear();
+				const linkKeys = new Set<string>();
+				newData.links.forEach(link => {
+					linkKeys.add(`${link.source}->${link.target}`);
+				});
+				newData.links.forEach(link => {
+					const reciprocalKey = `${link.target}->${link.source}`;
+					if (linkKeys.has(reciprocalKey)) {
+						this.reciprocalLinks.add(`${link.source}->${link.target}`);
+					}
+				});
+
+				// Build node map for O(1) lookup
+				this.nodeMap.clear();
+				newData.nodes.forEach(node => {
+					this.nodeMap.set(node.id, node);
+				});
+
 				this.graph.graphData(newData);
 				this.occludersCacheDirty = true;
+
+				// Build link adjacency index
+				this.linkAdjacencyIndex.clear();
+				const processedLinks = this.graph.graphData().links as ProcessedGraphLink[];
+				processedLinks.forEach(link => {
+					const sourceId = typeof link.source === 'object' ? (link.source as GraphNode).id : (link.source as string);
+					const targetId = typeof link.target === 'object' ? (link.target as GraphNode).id : (link.target as string);
+
+					if (!this.linkAdjacencyIndex.has(sourceId)) {
+						this.linkAdjacencyIndex.set(sourceId, []);
+					}
+					if (!this.linkAdjacencyIndex.has(targetId)) {
+						this.linkAdjacencyIndex.set(targetId, []);
+					}
+					this.linkAdjacencyIndex.get(sourceId)!.push(link);
+					this.linkAdjacencyIndex.get(targetId)!.push(link);
+				});
 
 				this.updateForces();
 				this.updateDisplay();
@@ -688,7 +744,6 @@ export class Graph3DView extends ItemView {
 		if (!this.isGraphInitialized) return;
 
 		this.updatePreprocessedGroups();
-		this.colorCache.clear();
 
 		const bgColor = this.settings.useThemeColors ? this.getCssColor('--background-primary', '#000000') : this.settings.backgroundColor;
 		this.graph.backgroundColor(bgColor);
@@ -745,7 +800,12 @@ export class Graph3DView extends ItemView {
 		}
 	}
 
+	public setGroupsDirty() {
+		this.groupsDirty = true;
+	}
+
 	private updatePreprocessedGroups() {
+		if (!this.groupsDirty) return;
 		this.preprocessedGroups = this.settings.groups.map(group => {
 			const query = group.query.toLowerCase();
 			if (!query) {
@@ -788,6 +848,7 @@ export class Graph3DView extends ItemView {
 				};
 			}
 		}).filter(g => g.query !== '');
+		this.groupsDirty = false;
 	}
 
 	private getNodeColor(node: GraphNode): string {
@@ -1042,16 +1103,14 @@ export class Graph3DView extends ItemView {
 			this.highlightedLinks.clear();
 			this.highlightedNodes.add(node.id);
 
-			const allLinks = this.graph.graphData().links;
+			const connectedLinks = this.linkAdjacencyIndex.get(node.id) || [];
+			connectedLinks.forEach((link: ProcessedGraphLink) => {
+				const sourceId = typeof link.source === 'object' ? (link.source as GraphNode).id : (link.source as string);
+				const targetId = typeof link.target === 'object' ? (link.target as GraphNode).id : (link.target as string);
 
-			allLinks.forEach((link: ProcessedGraphLink) => {
-				if (link.source.id === node.id) {
-					this.highlightedNodes.add(link.target.id);
-					this.highlightedLinks.add(link);
-				} else if (link.target.id === node.id) {
-					this.highlightedNodes.add(link.source.id);
-					this.highlightedLinks.add(link);
-				}
+				this.highlightedNodes.add(sourceId);
+				this.highlightedNodes.add(targetId);
+				this.highlightedLinks.add(link);
 			});
 
 			if (node.__threeObj && this.settings.zoomOnClick) {
@@ -1064,7 +1123,7 @@ export class Graph3DView extends ItemView {
 				this.graph.cameraPosition(targetPosition, nodePosition, 1000);
 			}
 		}
-		this.updateColors();
+		this.updateNodeColorsDiff();
 		this.graph.linkWidth(this.graph.linkWidth());
 		this.graph.linkDirectionalParticles(this.graph.linkDirectionalParticles());
 		this.updateLabels();
@@ -1089,23 +1148,46 @@ export class Graph3DView extends ItemView {
 
 		if (node) {
 			this.highlightedNodes.add(node.id);
-			this.graph.graphData().links.forEach((link: ProcessedGraphLink) => {
-				if (link.source.id === node.id || link.target.id === node.id) {
-					this.highlightedLinks.add(link);
-				}
+			const connectedLinks = this.linkAdjacencyIndex.get(node.id) || [];
+			connectedLinks.forEach((link: ProcessedGraphLink) => {
+				this.highlightedLinks.add(link);
 			});
 		}
-		this.updateColors();
+		this.updateNodeColorsDiff();
 		this.graph.linkWidth(this.graph.linkWidth());
 		this.graph.linkDirectionalParticles(this.graph.linkDirectionalParticles());
 		this.updateLabels();
 	}
 
+	private updateNodeColorsDiff() {
+		const nodesToUpdate = new Set<string>();
+		this.lastHighlightedNodes.forEach(id => nodesToUpdate.add(id));
+		this.highlightedNodes.forEach(id => nodesToUpdate.add(id));
+
+		nodesToUpdate.forEach(nodeId => {
+			const node = this.nodeMap.get(nodeId);
+			if (node) {
+				const mesh = this.nodeMeshes.get(node);
+				if (mesh) {
+					const color = this.getNodeColor(node);
+					if (color) {
+						mesh.material = this.getSharedMaterial(color);
+					}
+				}
+			}
+		});
+
+		// Save current highlights for next diff
+		this.lastHighlightedNodes.clear();
+		this.highlightedNodes.forEach(id => this.lastHighlightedNodes.add(id));
+	}
+
 	private getLinkCurvature(link: ProcessedGraphLink) {
-		const allLinks = this.graph.graphData().links;
-		const hasReciprocal = allLinks.some((l: ProcessedGraphLink) => l.source.id === link.target.id && l.target.id === link.source.id);
-		if (hasReciprocal) {
-			return link.source.id > link.target.id ? 0.2 : -0.2;
+		const sourceId = typeof link.source === 'object' ? (link.source as GraphNode).id : (link.source as string);
+		const targetId = typeof link.target === 'object' ? (link.target as GraphNode).id : (link.target as string);
+		const key = `${sourceId}->${targetId}`;
+		if (this.reciprocalLinks.has(key)) {
+			return sourceId > targetId ? 0.2 : -0.2;
 		}
 		return 0;
 	}
@@ -1135,6 +1217,19 @@ export class Graph3DView extends ItemView {
 
 		const allNodesMap = new Map<string, GraphNode>();
 
+		// Prune deleted files from caches to prevent memory leaks
+		const allFilePaths = new Set(allFiles.map(f => f.path));
+		for (const path of this.processedNodes.keys()) {
+			if (!allFilePaths.has(path)) {
+				this.processedNodes.delete(path);
+			}
+		}
+		for (const path of this.fileContentCache.keys()) {
+			if (!allFilePaths.has(path)) {
+				this.fileContentCache.delete(path);
+			}
+		}
+
 		const needsContent = !!searchQuery || this.preprocessedGroups.some(g => {
 			return g.type === 'text';
 		});
@@ -1144,25 +1239,52 @@ export class Graph3DView extends ItemView {
 		const workers = Array(Math.min(CONCURRENCY_LIMIT, readQueue.length)).fill(null).map(async () => {
 			while (readQueue.length > 0) {
 				const file = readQueue.shift()!;
-				const cache = this.app.metadataCache.getFileCache(file);
-				const tags = cache ? (getAllTags(cache) || []).map(t => t.startsWith('#') ? t.substring(1) : t) : [];
-				const type = file.extension === 'md' ? NodeType.File : NodeType.Attachment;
+				const cachedNodeInfo = this.processedNodes.get(file.path);
 
-				let content = '';
-				let lowerCaseContent = '';
-				if (type === NodeType.File && needsContent) {
-					const cached = this.fileContentCache.get(file.path);
-					if (cached && cached.mtime === file.stat.mtime) {
-						content = cached.content;
-						lowerCaseContent = cached.lowerCaseContent;
-					} else {
-						content = await this.app.vault.cachedRead(file);
-						lowerCaseContent = content.toLowerCase();
-						this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content, lowerCaseContent });
+				let node: GraphNode;
+
+				if (cachedNodeInfo && cachedNodeInfo.mtime === file.stat.mtime) {
+					node = cachedNodeInfo.node;
+					// If search or text groups require content, but cached node doesn't have it, load it
+					if (node.type === NodeType.File && needsContent && !node.content) {
+						let content = '';
+						let lowerCaseContent = '';
+						const cachedContent = this.fileContentCache.get(file.path);
+						if (cachedContent && cachedContent.mtime === file.stat.mtime) {
+							content = cachedContent.content;
+							lowerCaseContent = cachedContent.lowerCaseContent;
+						} else {
+							content = await this.app.vault.cachedRead(file);
+							lowerCaseContent = content.toLowerCase();
+							this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content, lowerCaseContent });
+						}
+						node.content = content;
+						node.lowerCaseContent = lowerCaseContent;
 					}
+				} else {
+					const cache = this.app.metadataCache.getFileCache(file);
+					const tags = cache ? (getAllTags(cache) || []).map(t => t.startsWith('#') ? t.substring(1) : t) : [];
+					const type = file.extension === 'md' ? NodeType.File : NodeType.Attachment;
+
+					let content = '';
+					let lowerCaseContent = '';
+					if (type === NodeType.File && needsContent) {
+						const cachedContent = this.fileContentCache.get(file.path);
+						if (cachedContent && cachedContent.mtime === file.stat.mtime) {
+							content = cachedContent.content;
+							lowerCaseContent = cachedContent.lowerCaseContent;
+						} else {
+							content = await this.app.vault.cachedRead(file);
+							lowerCaseContent = content.toLowerCase();
+							this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content, lowerCaseContent });
+						}
+					}
+
+					node = { id: file.path, name: file.basename, filename: file.name, type, tags, content, lowerCaseContent };
+					this.processedNodes.set(file.path, { node, mtime: file.stat.mtime });
 				}
 
-				allNodesMap.set(file.path, { id: file.path, name: file.basename, filename: file.name, type, tags, content, lowerCaseContent });
+				allNodesMap.set(file.path, node);
 			}
 		});
 		await Promise.all(workers);
@@ -1305,6 +1427,12 @@ export class Graph3DView extends ItemView {
 			this.messageEl.remove();
 		}
 		this.clearResourceCaches();
+		this.colorCache.clear();
+		this.processedNodes.clear();
+		this.nodeMap.clear();
+		this.reciprocalLinks.clear();
+		this.linkAdjacencyIndex.clear();
+		this.lastHighlightedNodes.clear();
 		this.controlsListenerAdded = false;
 	}
 }
