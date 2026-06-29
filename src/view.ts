@@ -49,6 +49,7 @@ export class Graph3DView extends ItemView {
 
 	private graphContainer: HTMLDivElement;
 	private messageEl: HTMLDivElement;
+	private counterEl: HTMLDivElement;
 	private settingsPanel: HTMLDivElement;
 	private settingsToggleButton: HTMLDivElement;
 
@@ -98,11 +99,12 @@ export class Graph3DView extends ItemView {
 	private getSharedGeometry(shape: NodeShape): THREE.BufferGeometry {
 		let geometry = this.geometryCache.get(shape);
 		if (!geometry) {
+			const perf = this.settings.performanceMode;
 			switch (shape) {
 				case NodeShape.Cube: geometry = new THREE.BoxGeometry(1, 1, 1); break;
-				case NodeShape.Pyramid: geometry = new THREE.ConeGeometry(1 / 1.5, 1, 4); break;
+				case NodeShape.Pyramid: geometry = new THREE.ConeGeometry(1 / 1.5, 1, perf ? 3 : 4); break;
 				case NodeShape.Tetrahedron: geometry = new THREE.TetrahedronGeometry(1 / 1.2); break;
-				default: geometry = new THREE.SphereGeometry(0.5);
+				default: geometry = new THREE.SphereGeometry(0.5, perf ? 8 : 16, perf ? 6 : 12);
 			}
 			this.geometryCache.set(shape, geometry);
 		}
@@ -122,7 +124,7 @@ export class Graph3DView extends ItemView {
 		return material;
 	}
 
-	private clearResourceCaches() {
+	public clearResourceCaches() {
 		this.geometryCache.forEach(g => g.dispose());
 		this.geometryCache.clear();
 		this.materialCache.forEach(m => m.dispose());
@@ -141,16 +143,19 @@ export class Graph3DView extends ItemView {
 
 		this.graphContainer = viewWrapper.createEl('div', { cls: 'graph-3d-container', attr: { tabindex: '0' } }); // Make it focusable
 		this.messageEl = viewWrapper.createEl('div', { cls: 'graph-3d-message' });
+		this.counterEl = viewWrapper.createEl('div', { cls: 'graph-3d-counter' });
 
 		this.addLocalControls();
 		this.initializeGraph();
 
-		this.resizeObserver = new ResizeObserver(() => {
+		const debouncedResize = debounce(() => {
 			if (this.graph && this.isGraphInitialized) {
 				this.graph.width(this.graphContainer.offsetWidth);
 				this.graph.height(this.graphContainer.offsetHeight);
 			}
-		});
+		}, 150, false);
+
+		this.resizeObserver = new ResizeObserver(() => debouncedResize());
 		this.resizeObserver.observe(this.graphContainer);
 
 		// Scoped event listeners
@@ -215,6 +220,16 @@ export class Graph3DView extends ItemView {
 					await this.plugin.saveSettings();
 					this.updateData({ useCache: true, reheat: false });
 				}, 500, true)));
+		new Setting(container)
+			.setName('Show neighboring nodes')
+			.setDesc('Show nodes linked to search/filter results.')
+			.addToggle(toggle => toggle
+				.setValue(this.settings.showNeighboringNodes)
+				.onChange(async (value) => {
+					this.settings.showNeighboringNodes = value;
+					await this.plugin.saveSettings();
+					this.updateData({ useCache: true, reheat: false });
+				}));
 	}
 
 	private renderAdvancedFilters(container: HTMLElement) {
@@ -344,6 +359,23 @@ export class Graph3DView extends ItemView {
 
 	private renderAppearanceSettings(container: HTMLElement) {
 		new Setting(container).setHeading().setName('Appearance');
+
+		new Setting(container)
+			.setName('Performance Mode')
+			.setDesc('Lowers geometry detail, disables link curvature and labels for better performance.')
+			.addToggle(toggle => toggle
+				.setValue(this.settings.performanceMode)
+				.onChange(async (value) => {
+					this.settings.performanceMode = value;
+					this.clearResourceCaches();
+					await this.plugin.saveSettings();
+					this.updateDisplay();
+					if (value) {
+						this.graph.graphData().nodes.forEach((node: GraphNode) => this.removeNodeSprite(node));
+					} else {
+						this.updateLabels();
+					}
+				}));
 
 		const updateDisplayAndColors = async () => {
 			await this.plugin.saveSettings();
@@ -712,6 +744,11 @@ export class Graph3DView extends ItemView {
 				this.updateColors();
 				this.updateControls();
 
+				if (this.counterEl) {
+					this.counterEl.setText(`${newData.nodes.length} nodes · ${newData.links.length} links`);
+					this.counterEl.addClass('is-visible');
+				}
+
 				if (isFirstLoad || reheat) {
 					this.graph.d3AlphaDecay(0.0228);
 					this.graph.d3VelocityDecay(0.4);
@@ -731,6 +768,10 @@ export class Graph3DView extends ItemView {
 				this.graph.backgroundColor(bgColor);
 				this.messageEl.setText("No search results or filters matched.");
 				this.messageEl.addClass('is-visible');
+				if (this.counterEl) {
+					this.counterEl.setText('');
+					this.counterEl.removeClass('is-visible');
+				}
 				this.graph.pauseAnimation();
 			}
 		} catch (error) {
@@ -886,7 +927,11 @@ export class Graph3DView extends ItemView {
 					}
 				}
 			} else {
-				if (node.name.toLowerCase().includes(query) || (node.lowerCaseContent && node.lowerCaseContent.includes(query))) {
+				let nodeContentLower = '';
+				if (node.type === NodeType.File) {
+					nodeContentLower = this.fileContentCache.get(node.id)?.lowerCaseContent || '';
+				}
+				if (node.name.toLowerCase().includes(query) || nodeContentLower.includes(query)) {
 					return group.color;
 				}
 			}
@@ -913,7 +958,7 @@ export class Graph3DView extends ItemView {
 		// These are now updated dynamically without a full redraw
 		this.graph
 			.linkWidth((link: GraphLink) => this.highlightedLinks.has(link) ? (this.settings.linkThickness * 2) : this.settings.linkThickness)
-			.linkDirectionalParticles((link: GraphLink) => this.highlightedLinks.has(link) ? 4 : 0)
+			.linkDirectionalParticles((link: GraphLink) => (this.highlightedLinks.has(link) && !this.settings.performanceMode) ? 4 : 0)
 			.linkDirectionalParticleWidth(2);
 	}
 
@@ -944,17 +989,6 @@ export class Graph3DView extends ItemView {
 
 		this.nodeMeshes.set(node, mesh);
 		group.add(mesh);
-
-		if (this.settings.showNodeLabels) {
-			const sprite = new SpriteText(node.name);
-			const isDarkMode = document.body.classList.contains('theme-dark');
-			sprite.color = isDarkMode ? this.settings.labelTextColorDark : this.settings.labelTextColorLight;
-			sprite.backgroundColor = this.hexToRgba(this.settings.labelBackgroundColor, this.settings.labelBackgroundOpacity);
-			sprite.textHeight = this.settings.labelTextSize;
-			sprite.position.y = s / 2 + 2;
-			this.nodeSprites.set(node, sprite);
-			group.add(sprite);
-		}
 
 		return group;
 	}
@@ -991,7 +1025,7 @@ export class Graph3DView extends ItemView {
 	}
 
 	private updateLabels() {
-		if (!this.isGraphInitialized || !this.settings.showNodeLabels) return;
+		if (!this.isGraphInitialized || !this.settings.showNodeLabels || this.settings.performanceMode) return;
 
 		const camera = this.graph.camera();
 		const nodes = this.graph.graphData().nodes;
@@ -1012,14 +1046,11 @@ export class Graph3DView extends ItemView {
 			: [];
 
 		nodes.forEach((node: GraphNode) => {
-			const sprite = this.nodeSprites.get(node);
-			if (!sprite) return;
-
 			if (this.settings.showLabelsOnHoverOnly) {
 				const isHovered = this.hoveredNode && this.hoveredNode.id === node.id;
 				const isHighlighted = this.highlightedNodes.has(node.id);
 				if (!isHovered && !isHighlighted) {
-					sprite.visible = false;
+					this.removeNodeSprite(node);
 					return;
 				}
 			}
@@ -1027,12 +1058,12 @@ export class Graph3DView extends ItemView {
 			if (node.__threeObj) {
 				node.__threeObj.getWorldPosition(this.reusableNodePosition);
 			} else {
-				sprite.visible = false;
+				this.removeNodeSprite(node);
 				return;
 			}
 
 			if (!this.frustum.containsPoint(this.reusableNodePosition)) {
-				sprite.visible = false;
+				this.removeNodeSprite(node);
 				return;
 			}
 
@@ -1062,9 +1093,55 @@ export class Graph3DView extends ItemView {
 				}
 			}
 
-			(sprite.material as THREE.SpriteMaterial).opacity = opacity;
-			sprite.visible = opacity > 0.01;
+			if (opacity > 0.01) {
+				let sprite = this.nodeSprites.get(node);
+				if (!sprite) {
+					sprite = this.createNodeSprite(node);
+				}
+				if (sprite && sprite.material) {
+					(sprite.material as THREE.SpriteMaterial).opacity = opacity;
+					sprite.visible = true;
+				}
+			} else {
+				this.removeNodeSprite(node);
+			}
 		});
+	}
+
+	private createNodeSprite(node: GraphNode): SpriteText {
+		const sprite = new SpriteText(node.name);
+		const isDarkMode = document.body.classList.contains('theme-dark');
+		sprite.color = isDarkMode ? this.settings.labelTextColorDark : this.settings.labelTextColorLight;
+		sprite.backgroundColor = this.hexToRgba(this.settings.labelBackgroundColor, this.settings.labelBackgroundOpacity);
+		sprite.textHeight = this.settings.labelTextSize;
+
+		let size: number;
+		switch (node.type) {
+			case NodeType.Tag: size = this.settings.tagNodeSize; break;
+			case NodeType.Attachment: size = this.settings.attachmentNodeSize; break;
+			default: size = this.settings.nodeSize;
+		}
+		const s = size * 1.5;
+		sprite.position.y = s / 2 + 2;
+
+		this.nodeSprites.set(node, sprite);
+		if (node.__threeObj) {
+			node.__threeObj.add(sprite);
+		}
+		return sprite;
+	}
+
+	private removeNodeSprite(node: GraphNode) {
+		const sprite = this.nodeSprites.get(node);
+		if (sprite) {
+			sprite.parent?.remove(sprite);
+			sprite.geometry?.dispose();
+			if (sprite.material) {
+				sprite.material.map?.dispose();
+				sprite.material.dispose();
+			}
+			this.nodeSprites.delete(node);
+		}
 	}
 
 	private handleNodeClick(node: GraphNode, event?: MouseEvent) {
@@ -1183,6 +1260,7 @@ export class Graph3DView extends ItemView {
 	}
 
 	private getLinkCurvature(link: ProcessedGraphLink) {
+		if (this.settings.performanceMode) return 0;
 		const sourceId = typeof link.source === 'object' ? (link.source as GraphNode).id : (link.source as string);
 		const targetId = typeof link.target === 'object' ? (link.target as GraphNode).id : (link.target as string);
 		const key = `${sourceId}->${targetId}`;
@@ -1326,14 +1404,18 @@ export class Graph3DView extends ItemView {
 						if (!allTags.has(tagName)) {
 							allTags.set(tagName, { id: tagId, name: `#${tagName}`, type: NodeType.Tag });
 						}
-						allLinks.push({ source: node.id, target: tagId });
+						const linkKey = `${node.id}->${tagId}`;
+						if (!existingLinks.has(linkKey)) {
+							allLinks.push({ source: node.id, target: tagId });
+							existingLinks.add(linkKey);
+						}
 					});
 				}
 			});
 			allTags.forEach((tagNode, tagName) => allNodesMap.set(tagNode.id, tagNode));
 		}
 
-		let finalNodes = Array.from(allNodesMap.values());
+		let matchedNodes = Array.from(allNodesMap.values());
 
 		// Advanced Filtering Logic
 		const activeFilters = filters.filter(f => f.enabled && f.value.trim() !== '');
@@ -1341,28 +1423,47 @@ export class Graph3DView extends ItemView {
 		if (activeFilters.length > 0) {
 			const nodesToKeep = new Set<GraphNode>();
 			activeFilters.forEach(filter => {
-				finalNodes.forEach(node => {
+				matchedNodes.forEach(node => {
 					if (this.matchesFilter(node, filter)) {
 						nodesToKeep.add(node);
 					}
 				});
 			});
-			finalNodes = Array.from(nodesToKeep);
+			matchedNodes = Array.from(nodesToKeep);
 		}
-
 
 		if (searchQuery) {
 			const lowerCaseFilter = searchQuery.toLowerCase();
-			finalNodes = finalNodes.filter(node => {
-				const nodeContentLower = node.lowerCaseContent || '';
+			matchedNodes = matchedNodes.filter(node => {
+				let nodeContentLower = '';
+				if (node.type === NodeType.File) {
+					nodeContentLower = this.fileContentCache.get(node.id)?.lowerCaseContent || '';
+				}
 				return node.name.toLowerCase().includes(lowerCaseFilter) ||
 					(node.type !== NodeType.Tag && node.id.toLowerCase().includes(lowerCaseFilter)) ||
 					nodeContentLower.includes(lowerCaseFilter);
 			});
 		}
 
-		const finalNodeIds = new Set(finalNodes.map(n => n.id));
-		let finalLinks = allLinks.filter(link => finalNodeIds.has(link.source) && finalNodeIds.has(link.target));
+		let finalNodes: GraphNode[];
+		if (showNeighboringNodes && (activeFilters.length > 0 || searchQuery)) {
+			const matchedIds = new Set(matchedNodes.map(n => n.id));
+			const neighborIds = new Set<string>();
+
+			allLinks.forEach(link => {
+				if (matchedIds.has(link.source)) {
+					neighborIds.add(link.target);
+				} else if (matchedIds.has(link.target)) {
+					neighborIds.add(link.source);
+				}
+			});
+
+			finalNodes = Array.from(allNodesMap.values()).filter(node =>
+				matchedIds.has(node.id) || neighborIds.has(node.id)
+			);
+		} else {
+			finalNodes = matchedNodes;
+		}
 
 		let nodesToShow = finalNodes.filter(node => {
 			if (node.type === NodeType.Tag) return showTags;
@@ -1370,8 +1471,8 @@ export class Graph3DView extends ItemView {
 			return true;
 		});
 
-		let nodesToShowIds = new Set(nodesToShow.map(n => n.id));
-		let linksToShow = finalLinks.filter(link => nodesToShowIds.has(link.source) && nodesToShowIds.has(link.target));
+		const nodesToShowIds = new Set(nodesToShow.map(n => n.id));
+		const linksToShow = allLinks.filter(link => nodesToShowIds.has(link.source) && nodesToShowIds.has(link.target));
 
 		if (hideOrphans) {
 			const linkedNodeIds = new Set<string>();
@@ -1380,9 +1481,6 @@ export class Graph3DView extends ItemView {
 				linkedNodeIds.add(link.target);
 			});
 			nodesToShow = nodesToShow.filter(node => linkedNodeIds.has(node.id));
-
-			const visibleNodeIds = new Set(nodesToShow.map(n => n.id));
-			linksToShow = linksToShow.filter(l => visibleNodeIds.has(l.source) && visibleNodeIds.has(l.target));
 		}
 
 		return { nodes: nodesToShow, links: linksToShow };
@@ -1393,13 +1491,7 @@ export class Graph3DView extends ItemView {
 			this.nodeMeshes.delete(node);
 		}
 
-		const sprite = this.nodeSprites.get(node);
-		if (sprite) {
-			sprite.parent?.remove(sprite);
-			sprite.geometry?.dispose();
-			sprite.material?.dispose();
-			this.nodeSprites.delete(node);
-		}
+		this.removeNodeSprite(node);
 
 		if (options.cleanGroup && node.__threeObj) {
 			node.__threeObj.parent?.remove(node.__threeObj);
@@ -1425,6 +1517,9 @@ export class Graph3DView extends ItemView {
 		}
 		if (this.messageEl) {
 			this.messageEl.remove();
+		}
+		if (this.counterEl) {
+			this.counterEl.remove();
 		}
 		this.clearResourceCaches();
 		this.colorCache.clear();

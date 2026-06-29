@@ -44,6 +44,14 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 					this.triggerUpdate({ redrawData: true, useCache: true });
 				}, 500, true)));
 
+		new Setting(containerEl).setName('Show neighboring nodes').setDesc('Show nodes that are linked to the search/filter results.')
+			.addToggle(toggle => toggle.setValue(this.plugin.settings.showNeighboringNodes)
+				.onChange(async (value) => {
+					this.plugin.settings.showNeighboringNodes = value;
+					await this.plugin.saveSettings();
+					this.triggerUpdate({ redrawData: true, useCache: true });
+				}));
+
 		containerEl.createEl('p', { text: 'Use the filters below to limit the number of nodes in the graph. Filters are applied in order.', cls: 'setting-item-description' });
 
 		this.plugin.settings.filters.forEach((filter, index) => {
@@ -158,6 +166,19 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 		}
 
 		new Setting(containerEl).setName('Appearance').setHeading();
+		new Setting(containerEl).setName('Performance Mode').setDesc('Lowers geometry detail, disables link curvature and labels for better performance.')
+			.addToggle(toggle => toggle.setValue(this.plugin.settings.performanceMode)
+				.onChange(async (value) => {
+					this.plugin.settings.performanceMode = value;
+					await this.plugin.saveSettings();
+					this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH).forEach(leaf => {
+						if (leaf.view instanceof Graph3DView) {
+							leaf.view.clearResourceCaches();
+						}
+					});
+					this.triggerUpdate({ updateDisplay: true });
+				}));
+
 		new Setting(containerEl).setName('Node shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.plugin.settings.nodeShape)
 			.onChange(async(value: string) => {this.plugin.settings.nodeShape = value as NodeShape; await this.plugin.saveSettings(); this.triggerUpdate({updateDisplay: true})}));
 		new Setting(containerEl).setName('Tag shape').addDropdown(dd => dd.addOptions(NodeShape).setValue(this.plugin.settings.tagShape)

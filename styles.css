@@ -83,3 +83,22 @@
 .graph-3d-settings-panel .setting-item:first-child {
 	border-top: none;
 }
+
+.graph-3d-counter {
+	position: absolute;
+	bottom: 10px;
+	left: 10px;
+	background-color: var(--background-secondary-alt);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 4px 8px;
+	font-size: var(--font-xs);
+	color: var(--text-muted);
+	z-index: 10;
+	pointer-events: none;
+	display: none;
+}
+
+.graph-3d-counter.is-visible {
+	display: block;
+}

@@ -58,6 +58,7 @@ export interface Graph3DPluginSettings {
 	rotateSpeed: number;
 	panSpeed: number;
 	zoomSpeed: number;
+	performanceMode: boolean;
 	// Forces
 	centerForce: number;
 	repelForce: number;
@@ -68,6 +69,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	// Search
 	searchQuery: '',
 	showNeighboringNodes: true,
+	performanceMode: false,
 	// Filters
 	filters: [],
 	showAttachments: false,
