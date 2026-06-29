@@ -5,7 +5,7 @@ A plugin for Obsidian that provides a highly customizable 3D, force-directed gra
 
 ---
 
-💡 *Check out my blog post [here](https://aryan-gupta.is-a.dev/blog/2026-03-19-3d-graph-plugin/)*
+💡 *Check out my blog post [here](https://aryan-gupta.is-a.dev/blog/2025-06-24-3d-graph-plugin/)*
 
 ---
 
