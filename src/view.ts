@@ -4,7 +4,7 @@ import ForceGraph3D from '3d-force-graph';
 import * as THREE from 'three';
 import SpriteText from 'three-spritetext';
 import Graph3DPlugin from '../main';
-import { Graph3DPluginSettings, GraphNode, GraphLink, NodeShape, NodeType, Filter } from './types';
+import { Graph3DPluginSettings, GraphNode, GraphLink, NodeShape, NodeType, Filter, ColorGroup } from './types';
 
 export const VIEW_TYPE_3D_GRAPH = "3d-graph-view";
 
@@ -12,6 +12,16 @@ export const VIEW_TYPE_3D_GRAPH = "3d-graph-view";
 interface ProcessedGraphLink {
 	source: GraphNode;
 	target: GraphNode;
+}
+
+interface PreprocessedGroup {
+	color: string;
+	query: string;
+	type: 'path' | 'tag' | 'file' | 'text';
+	pathQuery?: string;
+	tagQuery?: string;
+	fileQuery?: string;
+	fileRegex?: RegExp;
 }
 
 export class Graph3DView extends ItemView {
@@ -58,6 +68,7 @@ export class Graph3DView extends ItemView {
 	private pressedKeys = new Set<string>();
 
 	private fileContentCache = new Map<string, { mtime: number, content: string }>();
+	private preprocessedGroups: PreprocessedGroup[] = [];
 	private frustum = new THREE.Frustum();
 	private projScreenMatrix = new THREE.Matrix4();
 	private geometryCache = new Map<NodeShape, THREE.BufferGeometry>();
@@ -575,6 +586,8 @@ export class Graph3DView extends ItemView {
 		}
 		this.isUpdating = true;
 
+		this.updatePreprocessedGroups();
+
 		try {
 			const nodePositions = new Map<string, { x: number; y: number; z: number }>();
 			if (useCache && this.graph.graphData().nodes.length > 0) {
@@ -674,6 +687,7 @@ export class Graph3DView extends ItemView {
 	public updateColors() {
 		if (!this.isGraphInitialized) return;
 
+		this.updatePreprocessedGroups();
 		this.colorCache.clear();
 
 		const bgColor = this.settings.useThemeColors ? this.getCssColor('--background-primary', '#000000') : this.settings.backgroundColor;
@@ -731,41 +745,81 @@ export class Graph3DView extends ItemView {
 		}
 	}
 
+	private updatePreprocessedGroups() {
+		this.preprocessedGroups = this.settings.groups.map(group => {
+			const query = group.query.toLowerCase();
+			if (!query) {
+				return { color: group.color, query: '', type: 'text' as const };
+			}
+
+			if (query.startsWith('path:')) {
+				return {
+					color: group.color,
+					query,
+					type: 'path' as const,
+					pathQuery: query.substring(5).trim()
+				};
+			} else if (query.startsWith('tag:')) {
+				return {
+					color: group.color,
+					query,
+					type: 'tag' as const,
+					tagQuery: query.substring(4).trim().replace(/^#/, '')
+				};
+			} else if (query.startsWith('file:')) {
+				const fileQuery = query.substring(5).trim();
+				let fileRegex: RegExp | undefined;
+				if (fileQuery.includes('*')) {
+					const pattern = fileQuery.replace(/\./g, '\\.').replace(/\*/g, '.*');
+					fileRegex = new RegExp(`^${pattern}$`, 'i');
+				}
+				return {
+					color: group.color,
+					query,
+					type: 'file' as const,
+					fileQuery,
+					fileRegex
+				};
+			} else {
+				return {
+					color: group.color,
+					query,
+					type: 'text' as const
+				};
+			}
+		}).filter(g => g.query !== '');
+	}
+
 	private getNodeColor(node: GraphNode): string {
-		const { useThemeColors, colorHighlight, colorNode, colorTag, colorAttachment, groups } = this.settings;
+		const { useThemeColors, colorHighlight, colorNode, colorTag, colorAttachment } = this.settings;
 
 		if (this.highlightedNodes.has(node.id)) {
 			return useThemeColors ? this.getCssColor('--graph-node-focused', colorHighlight) : colorHighlight;
 		}
 
-		for (const group of groups) {
-			const query = group.query.toLowerCase();
-			if (!query) continue;
+		for (const group of this.preprocessedGroups) {
+			const { query, type } = group;
 
-			if (query.startsWith('path:')) {
-				const pathQuery = query.substring(5).trim();
-				if (node.type !== NodeType.Tag && node.id.toLowerCase().startsWith(pathQuery)) {
+			if (type === 'path') {
+				if (node.type !== NodeType.Tag && node.id.toLowerCase().startsWith(group.pathQuery!)) {
 					return group.color;
 				}
-			} else if (query.startsWith('tag:')) {
-				const tagQuery = query.substring(4).trim().replace(/^#/, '');
+			} else if (type === 'tag') {
+				const tagQuery = group.tagQuery!;
 				if (node.type === NodeType.Tag && node.name.toLowerCase() === `#${tagQuery}`) {
 					return group.color;
 				}
 				if (node.type === NodeType.File && node.tags?.some(tag => tag.toLowerCase() === tagQuery)) {
 					return group.color;
 				}
-			} else if (query.startsWith('file:')) {
-				const fileQuery = query.substring(5).trim().toLowerCase();
+			} else if (type === 'file') {
 				if ((node.type === NodeType.File || node.type === NodeType.Attachment) && node.filename) {
-					if (fileQuery.includes('*')) {
-						const pattern = fileQuery.replace(/\./g, '\\.').replace(/\*/g, '.*');
-						const regex = new RegExp(`^${pattern}$`, 'i');
-						if (regex.test(node.filename)) {
+					if (group.fileRegex) {
+						if (group.fileRegex.test(node.filename)) {
 							return group.color;
 						}
 					} else {
-						if (node.filename.toLowerCase() === fileQuery) {
+						if (node.filename.toLowerCase() === group.fileQuery!) {
 							return group.color;
 						}
 					}
@@ -790,6 +844,7 @@ export class Graph3DView extends ItemView {
 
 	public updateDisplay() {
 		if (!this.isGraphInitialized) return;
+		this.updatePreprocessedGroups();
 		// This function is now only for things that require a full object recreation
 		this.graph
 			.nodeThreeObject((node: GraphNode) => this.createNodeObject(node));
@@ -1080,9 +1135,8 @@ export class Graph3DView extends ItemView {
 
 		const allNodesMap = new Map<string, GraphNode>();
 
-		const needsContent = !!searchQuery || this.settings.groups.some(g => {
-			const q = g.query.toLowerCase();
-			return q && !q.startsWith('path:') && !q.startsWith('tag:') && !q.startsWith('file:');
+		const needsContent = !!searchQuery || this.preprocessedGroups.some(g => {
+			return g.type === 'text';
 		});
 
 		for (const file of allFiles) {
