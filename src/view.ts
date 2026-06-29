@@ -1139,27 +1139,33 @@ export class Graph3DView extends ItemView {
 			return g.type === 'text';
 		});
 
-		for (const file of allFiles) {
-			const cache = this.app.metadataCache.getFileCache(file);
-			const tags = cache ? (getAllTags(cache) || []).map(t => t.startsWith('#') ? t.substring(1) : t) : [];
-			const type = file.extension === 'md' ? NodeType.File : NodeType.Attachment;
+		const CONCURRENCY_LIMIT = 50;
+		const readQueue = [...allFiles];
+		const workers = Array(Math.min(CONCURRENCY_LIMIT, readQueue.length)).fill(null).map(async () => {
+			while (readQueue.length > 0) {
+				const file = readQueue.shift()!;
+				const cache = this.app.metadataCache.getFileCache(file);
+				const tags = cache ? (getAllTags(cache) || []).map(t => t.startsWith('#') ? t.substring(1) : t) : [];
+				const type = file.extension === 'md' ? NodeType.File : NodeType.Attachment;
 
-			let content = '';
-			let lowerCaseContent = '';
-			if (type === NodeType.File && needsContent) {
-				const cached = this.fileContentCache.get(file.path);
-				if (cached && cached.mtime === file.stat.mtime) {
-					content = cached.content;
-					lowerCaseContent = cached.lowerCaseContent;
-				} else {
-					content = await this.app.vault.cachedRead(file);
-					lowerCaseContent = content.toLowerCase();
-					this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content, lowerCaseContent });
+				let content = '';
+				let lowerCaseContent = '';
+				if (type === NodeType.File && needsContent) {
+					const cached = this.fileContentCache.get(file.path);
+					if (cached && cached.mtime === file.stat.mtime) {
+						content = cached.content;
+						lowerCaseContent = cached.lowerCaseContent;
+					} else {
+						content = await this.app.vault.cachedRead(file);
+						lowerCaseContent = content.toLowerCase();
+						this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content, lowerCaseContent });
+					}
 				}
-			}
 
-			allNodesMap.set(file.path, { id: file.path, name: file.basename, filename: file.name, type, tags, content, lowerCaseContent });
-		}
+				allNodesMap.set(file.path, { id: file.path, name: file.basename, filename: file.name, type, tags, content, lowerCaseContent });
+			}
+		});
+		await Promise.all(workers);
 
 
 		const allLinks: { source: string, target: string }[] = [];
