@@ -124,6 +124,7 @@ export interface GraphNode {
 	type: NodeType;
 	tags?: string[];
 	content?: string;
+	lowerCaseContent?: string;
 	__threeObj?: THREE.Object3D;
 	x?: number;
 	y?: number;

@@ -67,7 +67,7 @@ export class Graph3DView extends ItemView {
 	// Keyboard controls state
 	private pressedKeys = new Set<string>();
 
-	private fileContentCache = new Map<string, { mtime: number, content: string }>();
+	private fileContentCache = new Map<string, { mtime: number, content: string, lowerCaseContent: string }>();
 	private preprocessedGroups: PreprocessedGroup[] = [];
 	private frustum = new THREE.Frustum();
 	private projScreenMatrix = new THREE.Matrix4();
@@ -825,7 +825,7 @@ export class Graph3DView extends ItemView {
 					}
 				}
 			} else {
-				if (node.name.toLowerCase().includes(query) || (node.content && node.content.toLowerCase().includes(query))) {
+				if (node.name.toLowerCase().includes(query) || (node.lowerCaseContent && node.lowerCaseContent.includes(query))) {
 					return group.color;
 				}
 			}
@@ -1145,17 +1145,20 @@ export class Graph3DView extends ItemView {
 			const type = file.extension === 'md' ? NodeType.File : NodeType.Attachment;
 
 			let content = '';
+			let lowerCaseContent = '';
 			if (type === NodeType.File && needsContent) {
 				const cached = this.fileContentCache.get(file.path);
 				if (cached && cached.mtime === file.stat.mtime) {
 					content = cached.content;
+					lowerCaseContent = cached.lowerCaseContent;
 				} else {
 					content = await this.app.vault.cachedRead(file);
-					this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content });
+					lowerCaseContent = content.toLowerCase();
+					this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content, lowerCaseContent });
 				}
 			}
 
-			allNodesMap.set(file.path, { id: file.path, name: file.basename, filename: file.name, type, tags, content });
+			allNodesMap.set(file.path, { id: file.path, name: file.basename, filename: file.name, type, tags, content, lowerCaseContent });
 		}
 
 
@@ -1223,10 +1226,10 @@ export class Graph3DView extends ItemView {
 		if (searchQuery) {
 			const lowerCaseFilter = searchQuery.toLowerCase();
 			finalNodes = finalNodes.filter(node => {
-				const nodeContent = node.content || '';
+				const nodeContentLower = node.lowerCaseContent || '';
 				return node.name.toLowerCase().includes(lowerCaseFilter) ||
 					(node.type !== NodeType.Tag && node.id.toLowerCase().includes(lowerCaseFilter)) ||
-					nodeContent.toLowerCase().includes(lowerCaseFilter);
+					nodeContentLower.includes(lowerCaseFilter);
 			});
 		}
 
