@@ -33,10 +33,11 @@ const context = await esbuild.context({
 		"@lezer/lr",
 		...builtins],
 	format: "cjs",
-	target: "es2022",
+	target: "es2018",
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
+	mainFields: ["module", "main"],
 	outfile: "main.js",
 	minify: prod,
 });

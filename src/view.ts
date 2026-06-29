@@ -38,7 +38,7 @@ export class Graph3DView extends ItemView {
 	private readonly RAYCAST_CULL_DISTANCE = 800;
 
 	private nodeMeshes = new WeakMap<GraphNode, THREE.Mesh>();
-	private nodeSprites = new WeakMap<GraphNode, SpriteText>();
+	private nodeSprites = new Map<GraphNode, SpriteText>();
 
 	private highlightedNodes = new Set<string>();
 	private highlightedLinks = new Set<object>();
@@ -1323,42 +1323,27 @@ export class Graph3DView extends ItemView {
 
 				if (cachedNodeInfo && cachedNodeInfo.mtime === file.stat.mtime) {
 					node = cachedNodeInfo.node;
-					// If search or text groups require content, but cached node doesn't have it, load it
-					if (node.type === NodeType.File && needsContent && !node.content) {
-						let content = '';
-						let lowerCaseContent = '';
-						const cachedContent = this.fileContentCache.get(file.path);
-						if (cachedContent && cachedContent.mtime === file.stat.mtime) {
-							content = cachedContent.content;
-							lowerCaseContent = cachedContent.lowerCaseContent;
-						} else {
-							content = await this.app.vault.cachedRead(file);
-							lowerCaseContent = content.toLowerCase();
-							this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content, lowerCaseContent });
-						}
-						node.content = content;
-						node.lowerCaseContent = lowerCaseContent;
+					// If search or text groups require content, but cached content doesn't exist, load it
+					if (node.type === NodeType.File && needsContent && !this.fileContentCache.has(file.path)) {
+						const content = await this.app.vault.cachedRead(file);
+						const lowerCaseContent = content.toLowerCase();
+						this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content, lowerCaseContent });
 					}
 				} else {
 					const cache = this.app.metadataCache.getFileCache(file);
 					const tags = cache ? (getAllTags(cache) || []).map(t => t.startsWith('#') ? t.substring(1) : t) : [];
 					const type = file.extension === 'md' ? NodeType.File : NodeType.Attachment;
 
-					let content = '';
-					let lowerCaseContent = '';
 					if (type === NodeType.File && needsContent) {
 						const cachedContent = this.fileContentCache.get(file.path);
-						if (cachedContent && cachedContent.mtime === file.stat.mtime) {
-							content = cachedContent.content;
-							lowerCaseContent = cachedContent.lowerCaseContent;
-						} else {
-							content = await this.app.vault.cachedRead(file);
-							lowerCaseContent = content.toLowerCase();
+						if (!cachedContent || cachedContent.mtime !== file.stat.mtime) {
+							const content = await this.app.vault.cachedRead(file);
+							const lowerCaseContent = content.toLowerCase();
 							this.fileContentCache.set(file.path, { mtime: file.stat.mtime, content, lowerCaseContent });
 						}
 					}
 
-					node = { id: file.path, name: file.basename, filename: file.name, type, tags, content, lowerCaseContent };
+					node = { id: file.path, name: file.basename, filename: file.name, type, tags };
 					this.processedNodes.set(file.path, { node, mtime: file.stat.mtime });
 				}
 
@@ -1366,7 +1351,6 @@ export class Graph3DView extends ItemView {
 			}
 		});
 		await Promise.all(workers);
-
 
 		const allLinks: { source: string, target: string }[] = [];
 		const existingLinks = new Set<string>();
