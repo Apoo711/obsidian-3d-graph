@@ -12,7 +12,11 @@ pub struct GraphPhysicsWasm {
 #[wasm_bindgen]
 impl GraphPhysicsWasm {
     #[wasm_bindgen(constructor)]
-    pub fn new(node_count: usize, edges_flat: &[u32], params_val: JsValue) -> Result<GraphPhysicsWasm, JsValue> {
+    pub fn new(
+        node_count: usize,
+        edges_flat: &[u32],
+        params_val: JsValue,
+    ) -> Result<GraphPhysicsWasm, JsValue> {
         let params: SimulationParams = if params_val.is_undefined() || params_val.is_null() {
             SimulationParams::default()
         } else {
@@ -24,7 +28,8 @@ impl GraphPhysicsWasm {
     }
 
     pub fn set_params(&mut self, params_val: JsValue) -> Result<(), JsValue> {
-        let params: SimulationParams = from_value(params_val).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let params: SimulationParams =
+            from_value(params_val).map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.engine.params = params;
         self.engine.kinetic_energy = 1.0;
         Ok(())

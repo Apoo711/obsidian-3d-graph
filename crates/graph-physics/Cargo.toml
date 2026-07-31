@@ -4,15 +4,25 @@ version = "0.1.0"
 edition = "2024"
 description = "High-performance SIMD 3D force-directed graph physics engine"
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+    "-O4",
+    "--enable-simd",
+    "--enable-bulk-memory",
+    "--enable-nontrapping-float-to-int",
+    "--enable-sign-ext",
+    "--enable-mutable-globals",
+]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wasm-bindgen = "0.2"
+bytemuck = "1.18"
 glam = { version = "0.33", features = ["bytemuck"] }
 serde = { version = "1.0", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
-bytemuck = "1.18"
+wasm-bindgen = "0.2"
 
 [profile.release]
 opt-level = 3
@@ -21,7 +31,6 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O4", "--enable-simd", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
 
 

@@ -1,0 +1,34 @@
+# ==========================================
+# Stable Rules (Works with standard 'cargo fmt')
+# ==========================================
+
+# Align multi-line comments for better readability
+comment_width = 80
+wrap_comments = true
+
+# Use standard Unix line endings
+newline_style = "Unix"
+
+# Force trailing commas on arrays, structs, and enums (makes git diffs much cleaner)
+trailing_comma = "Vertical"
+
+
+# ==========================================
+# Nightly Rules (Requires 'cargo +nightly fmt')
+# ==========================================
+
+# Required to unlock advanced features below
+unstable_features = true
+
+# 1. Merge imports from the same crate into a single nested line
+# Changes: use std::io; use std::fs; -> use std::{fs, io};
+imports_granularity = "Crate"
+
+# 2. Automatically group imports into 3 neat blocks:
+# Block 1: Standard library (std, core, alloc)
+# Block 2: Third-party dependencies (from Crates.io)
+# Block 3: Your own local project modules
+group_imports = "StdExternalCrate"
+
+# 3. Alphabetically sort your imports inside those groups
+reorder_imports = true

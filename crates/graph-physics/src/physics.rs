@@ -53,7 +53,8 @@ impl Octree {
         }
 
         if self.nodes.capacity() < positions.len() * 2 {
-            self.nodes.reserve(positions.len() * 2 - self.nodes.capacity());
+            self.nodes
+                .reserve(positions.len() * 2 - self.nodes.capacity());
         }
 
         let mut min = positions[0];
@@ -85,7 +86,14 @@ impl Octree {
         }
     }
 
-    fn insert(&mut self, node_idx: usize, item_idx: usize, pos: Vec3A, positions: &[Vec3A], depth: usize) {
+    fn insert(
+        &mut self,
+        node_idx: usize,
+        item_idx: usize,
+        pos: Vec3A,
+        positions: &[Vec3A],
+        depth: usize,
+    ) {
         if depth > 16 {
             return; // Safety guard against infinite recursion on coincident points
         }
@@ -96,7 +104,10 @@ impl Octree {
         self.nodes[node_idx].mass = new_mass;
 
         if self.nodes[node_idx].node_index.is_none()
-            && self.nodes[node_idx].child_indices.iter().all(|c| c.is_none())
+            && self.nodes[node_idx]
+                .child_indices
+                .iter()
+                .all(|c| c.is_none())
         {
             self.nodes[node_idx].node_index = Some(item_idx);
             return;
