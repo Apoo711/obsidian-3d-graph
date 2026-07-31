@@ -1,4 +1,3 @@
-// src/settings.ts
 import { App, PluginSettingTab, Setting, debounce } from 'obsidian';
 import Graph3DPlugin from '../main';
 import { NodeShape } from './types';

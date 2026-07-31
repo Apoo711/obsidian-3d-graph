@@ -1,14 +1,14 @@
-// src/view.ts
 import { ItemView, WorkspaceLeaf, TFile, Setting, setIcon, debounce, getAllTags } from 'obsidian';
 import ForceGraph3D from '3d-force-graph';
 import * as THREE from 'three';
 import SpriteText from 'three-spritetext';
 import Graph3DPlugin from '../main';
 import { Graph3DPluginSettings, GraphNode, GraphLink, NodeShape, NodeType, Filter, ColorGroup } from './types';
+import { PhysicsBridge } from './physics/physics-bridge';
+import { getWasmArrayBuffer, createWorkerBlobUrl } from './physics/wasm-loader';
 
 export const VIEW_TYPE_3D_GRAPH = "3d-graph-view";
 
-// Define a more specific type for links once they are processed by the graph engine
 interface ProcessedGraphLink {
 	source: GraphNode;
 	target: GraphNode;
@@ -56,6 +56,7 @@ export class Graph3DView extends ItemView {
 	private chargeForce: any;
 	private centerForce: any;
 	private linkForce: any;
+	private physicsBridge = new PhysicsBridge();
 
 	private clickTimeout: any = null;
 	private isGraphInitialized = false;
@@ -513,13 +514,12 @@ export class Graph3DView extends ItemView {
 				}));
 
 		new Setting(container)
-			.setName('Link force')
-			.addSlider(slider => slider
-				.setLimits(0, 0.1, 0.001)
-				.setValue(this.settings.linkForce)
-				.setDynamicTooltip()
+			.setName('Use Rust WASM Physics Engine')
+			.setDesc('High-performance 128-bit SIMD force engine running in a Web Worker for multi-thousand node scaling.')
+			.addToggle(toggle => toggle
+				.setValue(this.settings.useWasmPhysics)
 				.onChange(async (value) => {
-					this.settings.linkForce = value;
+					this.settings.useWasmPhysics = value;
 					await forceChangeHandler();
 				}));
 	}
@@ -594,17 +594,36 @@ export class Graph3DView extends ItemView {
 
 			const Graph = (ForceGraph3D as any).default || ForceGraph3D;
 			this.graph = Graph()(this.graphContainer)
-				.enableNodeDrag(true)
 				.onNodeDrag((node: GraphNode) => {
 					const controls = this.graph.controls();
 					if (controls) {
 						controls.enabled = false;
+					}
+					if (this.settings.useWasmPhysics && this.graph) {
+						const nodes = this.graph.graphData().nodes as GraphNode[];
+						const flatPositions = new Float32Array(nodes.length * 3);
+						for (let i = 0; i < nodes.length; i++) {
+							flatPositions[i * 3] = nodes[i].x || 0;
+							flatPositions[i * 3 + 1] = nodes[i].y || 0;
+							flatPositions[i * 3 + 2] = nodes[i].z || 0;
+						}
+						this.physicsBridge.setPositions(flatPositions);
 					}
 				})
 				.onNodeDragEnd((node: GraphNode) => {
 					const controls = this.graph.controls();
 					if (controls) {
 						controls.enabled = true;
+					}
+					if (this.settings.useWasmPhysics && this.graph) {
+						const nodes = this.graph.graphData().nodes as GraphNode[];
+						const flatPositions = new Float32Array(nodes.length * 3);
+						for (let i = 0; i < nodes.length; i++) {
+							flatPositions[i * 3] = nodes[i].x || 0;
+							flatPositions[i * 3 + 1] = nodes[i].y || 0;
+							flatPositions[i * 3 + 2] = nodes[i].z || 0;
+						}
+						this.physicsBridge.setPositions(flatPositions);
 					}
 				})
 				.onNodeClick((node: GraphNode, event: MouseEvent) => this.handleNodeClick(node, event))
@@ -749,7 +768,51 @@ export class Graph3DView extends ItemView {
 					this.counterEl.addClass('is-visible');
 				}
 
-				if (isFirstLoad || reheat) {
+				if (this.settings.useWasmPhysics && hasNodes) {
+					this.graph.d3AlphaDecay(1); // Stop main-thread D3 physics engine from spinning
+
+					const nodeIndexMap = new Map<string, number>();
+					newData.nodes.forEach((n: GraphNode, idx: number) => nodeIndexMap.set(n.id, idx));
+
+					const edgesList: number[] = [];
+					newData.links.forEach((l: GraphLink) => {
+						const srcId = typeof l.source === 'object' ? (l.source as GraphNode).id : (l.source as string);
+						const tgtId = typeof l.target === 'object' ? (l.target as GraphNode).id : (l.target as string);
+						const srcIdx = nodeIndexMap.get(srcId);
+						const tgtIdx = nodeIndexMap.get(tgtId);
+						if (srcIdx !== undefined && tgtIdx !== undefined) {
+							edgesList.push(srcIdx, tgtIdx);
+						}
+					});
+
+					this.physicsBridge.init(
+						getWasmArrayBuffer(),
+						createWorkerBlobUrl(),
+						newData.nodes.length,
+						new Uint32Array(edgesList),
+						{
+							gravity: this.settings.centerForce,
+							repulsion: this.settings.repelForce * 40.0,
+							attraction: this.settings.linkForce,
+						}
+					).then(() => {
+						this.physicsBridge.onTick((positions) => {
+							for (let i = 0; i < newData.nodes.length; i++) {
+								const node = newData.nodes[i];
+								node.x = positions[i * 3];
+								node.y = positions[i * 3 + 1];
+								node.z = positions[i * 3 + 2];
+								if (node.__threeObj) {
+									node.__threeObj.position.set(node.x, node.y, node.z);
+								}
+							}
+							this.handleKeyboardMovement();
+						});
+						this.physicsBridge.start();
+					}).catch(err => {
+						console.error("[3D Graph] WASM Physics engine failed to start, falling back to D3 force engine:", err);
+					});
+				} else if (isFirstLoad || reheat) {
 					this.graph.d3AlphaDecay(0.0228);
 					this.graph.d3VelocityDecay(0.4);
 					this.graph.d3ReheatSimulation();
@@ -996,16 +1059,24 @@ export class Graph3DView extends ItemView {
 	public updateForces() {
 		if (!this.isGraphInitialized) return;
 
-		const { centerForce, repelForce, linkForce } = this.settings;
+		const { centerForce, repelForce, linkForce, useWasmPhysics } = this.settings;
 
-		if (this.centerForce) {
-			this.centerForce.strength(centerForce);
-		}
-		if (this.chargeForce) {
-			this.chargeForce.strength(-repelForce);
-		}
-		if (this.linkForce) {
-			this.linkForce.strength(linkForce);
+		if (useWasmPhysics) {
+			this.physicsBridge.setParams({
+				gravity: centerForce,
+				repulsion: repelForce * 40.0,
+				attraction: linkForce,
+			});
+		} else {
+			if (this.centerForce) {
+				this.centerForce.strength(centerForce);
+			}
+			if (this.chargeForce) {
+				this.chargeForce.strength(-repelForce);
+			}
+			if (this.linkForce) {
+				this.linkForce.strength(linkForce);
+			}
 		}
 	}
 
@@ -1018,7 +1089,16 @@ export class Graph3DView extends ItemView {
 			controls.panSpeed = panSpeed;
 			controls.zoomSpeed = zoomSpeed;
 			if (!this.controlsListenerAdded) {
-				controls.addEventListener('change', () => this.updateLabels());
+				let labelUpdatePending = false;
+				controls.addEventListener('change', () => {
+					if (!labelUpdatePending) {
+						labelUpdatePending = true;
+						requestAnimationFrame(() => {
+							this.updateLabels();
+							labelUpdatePending = false;
+						});
+					}
+				});
 				this.controlsListenerAdded = true;
 			}
 		}
@@ -1483,6 +1563,7 @@ export class Graph3DView extends ItemView {
 	}
 
 	async onClose() {
+		this.physicsBridge.dispose();
 		if (this.clickTimeout) clearTimeout(this.clickTimeout);
 		this.resizeObserver?.disconnect();
 		if (this.graph) {

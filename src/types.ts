@@ -63,6 +63,7 @@ export interface Graph3DPluginSettings {
 	centerForce: number;
 	repelForce: number;
 	linkForce: number;
+	useWasmPhysics: boolean;
 }
 
 export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
@@ -115,6 +116,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	centerForce: 0.1,
 	repelForce: 10,
 	linkForce: 0.01,
+	useWasmPhysics: true,
 };
 
 export enum NodeType { File, Tag, Attachment }
