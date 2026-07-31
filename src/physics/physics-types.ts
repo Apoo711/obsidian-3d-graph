@@ -21,7 +21,14 @@ export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
 };
 
 export type WorkerIncomingMessage =
-	| { type: "INIT"; wasmBytes: ArrayBuffer; nodeCount: number; edgesFlat: Uint32Array; params?: Partial<SimulationParams>; initialPositions?: Float32Array }
+	| {
+			type: "INIT";
+			wasmBytes: ArrayBuffer;
+			nodeCount: number;
+			edgesFlat: Uint32Array;
+			params?: Partial<SimulationParams>;
+			initialPositions?: Float32Array;
+	  }
 	| { type: "STEP"; count?: number }
 	| { type: "SET_PARAMS"; params: Partial<SimulationParams> }
 	| { type: "SET_POSITIONS"; positions: Float32Array };

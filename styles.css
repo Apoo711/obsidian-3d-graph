@@ -68,7 +68,7 @@
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 8px;
 	padding: 16px;
-	box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .graph-3d-settings-panel.is-open {

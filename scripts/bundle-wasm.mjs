@@ -16,7 +16,7 @@ const wasmBase64 = wasmBuffer.toString("base64");
 
 fs.writeFileSync(
 	path.resolve("src/physics/wasm-data.ts"),
-	`// Auto-generated WASM binary Base64\nconst wasmBase64 = "${wasmBase64}";\nexport default wasmBase64;\n`
+	`// Auto-generated WASM binary Base64\nconst wasmBase64 = "${wasmBase64}";\nexport default wasmBase64;\n`,
 );
 
 console.log("Bundling Physics Web Worker...");
@@ -32,7 +32,7 @@ const workerBuild = await esbuild.build({
 const workerCode = workerBuild.outputFiles[0].text;
 fs.writeFileSync(
 	path.resolve("src/physics/worker-data.ts"),
-	`// Auto-generated Physics Worker Code\nconst workerCode = ${JSON.stringify(workerCode)};\nexport default workerCode;\n`
+	`// Auto-generated Physics Worker Code\nconst workerCode = ${JSON.stringify(workerCode)};\nexport default workerCode;\n`,
 );
 
 console.log("WASM & Physics Worker bundled successfully!");

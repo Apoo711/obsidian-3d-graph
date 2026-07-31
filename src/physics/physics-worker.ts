@@ -13,20 +13,26 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
 		switch (msg.type) {
 			case "INIT": {
 				nodeCount = msg.nodeCount;
-				
+
 				// Initialize compiled WASM module via wasm-bindgen glue
 				const initWasm = require("../../crates/graph-physics/pkg/graph_physics.js");
-				
+
 				// initSync builds WebAssembly.Module & Instance with exact imports
 				wasmInstance = initWasm.initSync({ module: msg.wasmBytes });
 
-				physicsWasm = new initWasm.GraphPhysicsWasm(msg.nodeCount, msg.edgesFlat, msg.params || {});
+				physicsWasm = new initWasm.GraphPhysicsWasm(
+					msg.nodeCount,
+					msg.edgesFlat,
+					msg.params || {},
+				);
 
 				if (msg.initialPositions) {
 					physicsWasm.set_positions(msg.initialPositions);
 				}
 
-				(self as any).postMessage({ type: "READY" } as WorkerOutgoingMessage);
+				(self as any).postMessage({
+					type: "READY",
+				} as WorkerOutgoingMessage);
 				break;
 			}
 
@@ -59,8 +65,10 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
 				// Access raw linear WASM memory positions buffer
 				const ptr = physicsWasm.positions_ptr();
 				const len = physicsWasm.positions_len();
-				const memBuffer = wasmInstance.memory ? wasmInstance.memory.buffer : wasmInstance.exports.memory.buffer;
-				
+				const memBuffer = wasmInstance.memory
+					? wasmInstance.memory.buffer
+					: wasmInstance.exports.memory.buffer;
+
 				// Slice position array to create transferable ArrayBuffer
 				const positionsView = new Float32Array(memBuffer, ptr, len);
 				const outputBuffer = new Float32Array(positionsView);

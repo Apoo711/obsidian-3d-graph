@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from "three";
 
 export interface ColorGroup {
 	query: string;
@@ -6,12 +6,17 @@ export interface ColorGroup {
 }
 
 export interface Filter {
-	type: 'path' | 'tag';
+	type: "path" | "tag";
 	value: string;
 	enabled: boolean;
 }
 
-export enum NodeShape { Sphere = 'Sphere', Cube = 'Cube', Pyramid = 'Pyramid', Tetrahedron = 'Tetrahedron' }
+export enum NodeShape {
+	Sphere = "Sphere",
+	Cube = "Cube",
+	Pyramid = "Pyramid",
+	Tetrahedron = "Tetrahedron",
+}
 
 export interface Graph3DPluginSettings {
 	// Search
@@ -68,7 +73,7 @@ export interface Graph3DPluginSettings {
 
 export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	// Search
-	searchQuery: '',
+	searchQuery: "",
 	showNeighboringNodes: true,
 	performanceMode: false,
 	// Filters
@@ -80,12 +85,12 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	groups: [],
 	// Display
 	useThemeColors: true,
-	colorNode: '#2080F0',
-	colorTag: '#9A49E8',
-	colorAttachment: '#75B63A',
-	colorLink: '#666666',
-	colorHighlight: '#FFB800',
-	backgroundColor: '#0E0E10',
+	colorNode: "#2080F0",
+	colorTag: "#9A49E8",
+	colorAttachment: "#75B63A",
+	colorLink: "#666666",
+	colorHighlight: "#FFB800",
+	backgroundColor: "#0E0E10",
 	// Appearance
 	nodeSize: 1.5,
 	tagNodeSize: 1.0,
@@ -100,9 +105,9 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	labelDistance: 150,
 	labelFadeThreshold: 0.8,
 	labelTextSize: 2.5,
-	labelTextColorLight: '#000000',
-	labelTextColorDark: '#ffffff',
-	labelBackgroundColor: '#ffffff',
+	labelTextColorLight: "#000000",
+	labelTextColorDark: "#ffffff",
+	labelBackgroundColor: "#ffffff",
 	labelBackgroundOpacity: 0.3,
 	labelOcclusion: false,
 	// Interaction
@@ -119,7 +124,11 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
 	useWasmPhysics: true,
 };
 
-export enum NodeType { File, Tag, Attachment }
+export enum NodeType {
+	File,
+	Tag,
+	Attachment,
+}
 
 export interface GraphNode {
 	id: string;

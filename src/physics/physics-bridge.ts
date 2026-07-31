@@ -1,6 +1,14 @@
-import { SimulationParams, DEFAULT_SIMULATION_PARAMS, WorkerIncomingMessage, WorkerOutgoingMessage } from "./physics-types";
+import {
+	SimulationParams,
+	DEFAULT_SIMULATION_PARAMS,
+	WorkerIncomingMessage,
+	WorkerOutgoingMessage,
+} from "./physics-types";
 
-export type TickCallback = (positions: Float32Array, frameTimeMs: number) => void;
+export type TickCallback = (
+	positions: Float32Array,
+	frameTimeMs: number,
+) => void;
 
 export class PhysicsBridge {
 	private worker: Worker | null = null;
@@ -16,16 +24,19 @@ export class PhysicsBridge {
 		nodeCount: number,
 		edgesFlat: Uint32Array,
 		params: Partial<SimulationParams> = DEFAULT_SIMULATION_PARAMS,
-		initialPositions?: Float32Array
+		initialPositions?: Float32Array,
 	): Promise<void> {
 		this.dispose();
 
 		this.worker = new Worker(workerScriptBlobUrl);
 
 		return new Promise((resolve, reject) => {
-			if (!this.worker) return reject(new Error("Failed to create worker"));
+			if (!this.worker)
+				return reject(new Error("Failed to create worker"));
 
-			this.worker.onmessage = (event: MessageEvent<WorkerOutgoingMessage>) => {
+			this.worker.onmessage = (
+				event: MessageEvent<WorkerOutgoingMessage>,
+			) => {
 				const msg = event.data;
 
 				if (msg.type === "READY") {
@@ -84,7 +95,10 @@ export class PhysicsBridge {
 	public setParams(params: Partial<SimulationParams>): void {
 		if (!this.worker || !this.isReady) return;
 		const fullParams = { ...DEFAULT_SIMULATION_PARAMS, ...params };
-		const msg: WorkerIncomingMessage = { type: "SET_PARAMS", params: fullParams };
+		const msg: WorkerIncomingMessage = {
+			type: "SET_PARAMS",
+			params: fullParams,
+		};
 		this.worker.postMessage(msg);
 	}
 

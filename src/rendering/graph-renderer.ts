@@ -26,7 +26,11 @@ export class InstancedGraphRenderer {
 		this.scene = scene;
 	}
 
-	public initGraph(nodes: NodeData[], edges: EdgeData[], defaultNodeRadius = 3): void {
+	public initGraph(
+		nodes: NodeData[],
+		edges: EdgeData[],
+		defaultNodeRadius = 3,
+	): void {
 		this.clear();
 
 		this.nodeCount = nodes.length;
@@ -34,13 +38,21 @@ export class InstancedGraphRenderer {
 
 		if (this.nodeCount === 0) return;
 
-		const sphereGeometry = new THREE.SphereGeometry(defaultNodeRadius, 16, 16);
+		const sphereGeometry = new THREE.SphereGeometry(
+			defaultNodeRadius,
+			16,
+			16,
+		);
 		const nodeMaterial = new THREE.MeshStandardMaterial({
 			roughness: 0.2,
 			metalness: 0.1,
 		});
 
-		this.instancedMesh = new THREE.InstancedMesh(sphereGeometry, nodeMaterial, this.nodeCount);
+		this.instancedMesh = new THREE.InstancedMesh(
+			sphereGeometry,
+			nodeMaterial,
+			this.nodeCount,
+		);
 		this.instancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
 		const matrixDummy = new THREE.Matrix4();
@@ -65,7 +77,7 @@ export class InstancedGraphRenderer {
 		if (edgeCount > 0) {
 			this.linePositions = new Float32Array(edgeCount * 2 * 3);
 			const lineGeometry = new THREE.BufferGeometry();
-			
+
 			const posAttr = new THREE.BufferAttribute(this.linePositions, 3);
 			posAttr.setUsage(THREE.DynamicDrawUsage);
 			lineGeometry.setAttribute("position", posAttr);
@@ -77,7 +89,10 @@ export class InstancedGraphRenderer {
 				linewidth: 1,
 			});
 
-			this.lineSegments = new THREE.LineSegments(lineGeometry, lineMaterial);
+			this.lineSegments = new THREE.LineSegments(
+				lineGeometry,
+				lineMaterial,
+			);
 			this.scene.add(this.lineSegments);
 		}
 	}
@@ -85,7 +100,8 @@ export class InstancedGraphRenderer {
 	public updatePositions(positions: Float32Array): void {
 		if (!this.instancedMesh || this.nodeCount === 0) return;
 
-		const instanceArray = this.instancedMesh.instanceMatrix.array as Float32Array;
+		const instanceArray = this.instancedMesh.instanceMatrix
+			.array as Float32Array;
 
 		for (let i = 0; i < this.nodeCount; i++) {
 			const matrixIdx = i * 16;
@@ -116,7 +132,8 @@ export class InstancedGraphRenderer {
 				this.linePositions[lineIdx + 5] = positions[tgtIdx + 2];
 			}
 
-			const posAttr = this.lineSegments.geometry.attributes.position as THREE.BufferAttribute;
+			const posAttr = this.lineSegments.geometry.attributes
+				.position as THREE.BufferAttribute;
 			posAttr.needsUpdate = true;
 		}
 	}
