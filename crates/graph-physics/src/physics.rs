@@ -2,6 +2,7 @@ use glam::Vec3A;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SimulationParams {
     pub repulsion: f32,
     pub attraction: f32,
@@ -80,11 +81,15 @@ impl Octree {
         self.nodes.push(root);
 
         for (idx, &pos) in positions.iter().enumerate() {
-            self.insert(0, idx, pos);
+            self.insert(0, idx, pos, positions, 0);
         }
     }
 
-    fn insert(&mut self, node_idx: usize, item_idx: usize, pos: Vec3A) {
+    fn insert(&mut self, node_idx: usize, item_idx: usize, pos: Vec3A, positions: &[Vec3A], depth: usize) {
+        if depth > 16 {
+            return; // Safety guard against infinite recursion on coincident points
+        }
+
         let new_mass = self.nodes[node_idx].mass + 1.0;
         self.nodes[node_idx].center_of_mass =
             (self.nodes[node_idx].center_of_mass * self.nodes[node_idx].mass + pos) / new_mass;
@@ -98,15 +103,15 @@ impl Octree {
         }
 
         if let Some(existing_idx) = self.nodes[node_idx].node_index.take() {
-            let existing_pos = self.nodes[node_idx].center_of_mass;
+            let existing_pos = positions[existing_idx];
             let octant = self.get_octant(node_idx, existing_pos);
             let child_idx = self.get_or_create_child(node_idx, octant);
-            self.insert(child_idx, existing_idx, existing_pos);
+            self.insert(child_idx, existing_idx, existing_pos, positions, depth + 1);
         }
 
         let octant = self.get_octant(node_idx, pos);
         let child_idx = self.get_or_create_child(node_idx, octant);
-        self.insert(child_idx, item_idx, pos);
+        self.insert(child_idx, item_idx, pos, positions, depth + 1);
     }
 
     fn get_octant(&self, node_idx: usize, pos: Vec3A) -> usize {
@@ -171,7 +176,12 @@ impl Octree {
         repulsion_const: f32,
         theta: f32,
         force_acc: &mut Vec3A,
+        depth: usize,
     ) {
+        if depth > 16 {
+            return;
+        }
+
         let node = &self.nodes[node_idx];
         if node.mass == 0.0 {
             return;
@@ -198,6 +208,7 @@ impl Octree {
                         repulsion_const,
                         theta,
                         force_acc,
+                        depth + 1,
                     );
                 }
             }
@@ -227,7 +238,11 @@ impl PhysicsEngine {
 
         for i in 0..node_count {
             let theta = 2.0 * std::f32::consts::PI * (i as f32) / golden_ratio;
-            let phi = ((1.0 - 2.0 * (i as f32 + 0.5) / (node_count as f32)).clamp(-1.0, 1.0)).acos();
+            let phi = if node_count <= 1 {
+                0.0
+            } else {
+                ((1.0 - 2.0 * (i as f32 + 0.5) / (node_count as f32)).clamp(-1.0, 1.0)).acos()
+            };
             let r = radius_scale * ((i as f32 + 1.0) / (node_count as f32)).sqrt();
 
             let x = r * phi.sin() * theta.cos();
@@ -294,6 +309,7 @@ impl PhysicsEngine {
                     self.params.repulsion,
                     self.params.theta,
                     &mut rep_force,
+                    0,
                 );
                 self.forces[i] += rep_force;
             }
@@ -320,8 +336,14 @@ impl PhysicsEngine {
         let rest_len = self.params.link_distance;
 
         for e in 0..edge_count {
-            let src = self.edges[e * 2] as usize;
-            let tgt = self.edges[e * 2 + 1] as usize;
+            let src_idx = e * 2;
+            let tgt_idx = e * 2 + 1;
+            if tgt_idx >= self.edges.len() {
+                break;
+            }
+
+            let src = self.edges[src_idx] as usize;
+            let tgt = self.edges[tgt_idx] as usize;
 
             if src < n && tgt < n && src != tgt {
                 let delta = self.positions[tgt] - self.positions[src];
