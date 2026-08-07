@@ -13,6 +13,7 @@
 	"author": "Aryan Gupta",
 	"license": "MIT",
 	"devDependencies": {
+		"@biomejs/biome": "2.5.7",
 		"@types/node": "^16.11.6",
 		"@types/three": "^0.184.1",
 		"@typescript-eslint/eslint-plugin": "5.29.0",

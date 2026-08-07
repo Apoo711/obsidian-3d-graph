@@ -1,21 +1,9 @@
 use glam::Vec3A;
 use serde::{Deserialize, Serialize};
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/// Sentinel value meaning "no child" / "no item stored here".
 const EMPTY: u32 = u32::MAX;
 
-/// Switch from O(N²) brute-force to Barnes-Hut octree above this node count.
-/// Lowered from 500: at 64 nodes the octree overhead is negligible, and graphs
-/// between 64-500 nodes previously ran at O(N²) — the worst possible scaling.
 const OCTREE_THRESHOLD: usize = 64;
-
-// ---------------------------------------------------------------------------
-// SimulationParams
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(default)]
@@ -47,25 +35,13 @@ impl Default for SimulationParams {
     }
 }
 
-// ---------------------------------------------------------------------------
-// OctreeNode — compact layout using u32 sentinels
-// ---------------------------------------------------------------------------
-//
-// WHY: The original used [Option<usize>; 8] + Option<usize> for child_indices
-// and node_index. On 64-bit, Option<usize> is 16 bytes (no niche), so:
-//   Old: [Option<usize>;8] = 128 bytes + Option<usize> = 16 bytes → ~196 B/node
-//   New: [u32;8]           =  32 bytes + u32            =  4 bytes → ~88  B/node
-// 2.2× reduction in node size → ~2.2× more octree nodes fit in L2 cache.
-
 pub struct OctreeNode {
-    pub center_of_mass: Vec3A, // 16 bytes (SIMD-aligned)
-    pub mass: f32,             //  4 bytes
-    pub bounds_min: Vec3A,     // 16 bytes
-    pub bounds_max: Vec3A,     // 16 bytes
-    /// Child octant indices into `Octree::nodes`.  EMPTY (u32::MAX) = no child.
-    pub children: [u32; 8], //  32 bytes
-    /// Index of the graph node stored at this leaf.  EMPTY = none.
-    pub node_index: u32, //  4 bytes
+    pub center_of_mass: Vec3A,
+    pub mass: f32,
+    pub bounds_min: Vec3A,
+    pub bounds_max: Vec3A,
+    pub children: [u32; 8],
+    pub node_index: u32,
 }
 
 impl OctreeNode {
@@ -83,26 +59,13 @@ impl OctreeNode {
 
     #[inline(always)]
     fn is_leaf(&self) -> bool {
-        // All 8 children are EMPTY.
         self.children.iter().all(|&c| c == EMPTY)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Octree
-// ---------------------------------------------------------------------------
-//
-// WHY iterative instead of recursive:
-//   Recursive insert/traverse accumulates O(log₈ N) stack frames per call.
-//   For 10 k nodes that is ~14 nested Rust frames per insertion, repeated 10 k
-//   times = 140 k stack ops.  The iterative version reuses a pre-allocated Vec
-//   as an explicit stack — zero heap allocation in steady state.
-
 pub struct Octree {
     pub nodes: Vec<OctreeNode>,
-    /// Reusable work-stack for iterative insertion.  Cleared on each rebuild.
     insert_stack: Vec<(u32, u32, Vec3A)>,
-    /// Reusable work-stack for iterative Barnes-Hut traversal.
     traversal_stack: Vec<u32>,
 }
 
@@ -123,14 +86,11 @@ impl Octree {
             return;
         }
 
-        // Pre-reserve capacity to avoid Vec reallocations during insertion.
-        // Worst case: fully unbalanced tree ≈ 2×N nodes.
         let cap = positions.len() * 2;
         if self.nodes.capacity() < cap {
             self.nodes.reserve(cap - self.nodes.capacity());
         }
 
-        // Compute tight AABB.
         let mut bmin = positions[0];
         let mut bmax = positions[0];
         for &p in positions.iter().skip(1) {
@@ -138,11 +98,8 @@ impl Octree {
             bmax = bmax.max(p);
         }
 
-        // Expand to a cube so all octants are equal-sided.
         let center = (bmin + bmax) * 0.5;
-        let half = ((bmax - bmin) * 0.5)
-            .max(Vec3A::splat(1.0))
-            .max_element();
+        let half = ((bmax - bmin) * 0.5).max(Vec3A::splat(1.0)).max_element();
         let root_min = center - Vec3A::splat(half);
         let root_max = center + Vec3A::splat(half);
 
@@ -153,15 +110,11 @@ impl Octree {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Iterative insert
-    // ------------------------------------------------------------------
     fn insert_iter(&mut self, item_idx: u32, pos: Vec3A, positions: &[Vec3A]) {
         self.insert_stack.clear();
         self.insert_stack.push((0u32, item_idx, pos));
 
         while let Some((node_idx, item_idx, pos)) = self.insert_stack.pop() {
-            // 1. Update center-of-mass and mass (scoped borrow released immediately).
             {
                 let node = &mut self.nodes[node_idx as usize];
                 let new_mass = node.mass + 1.0;
@@ -169,45 +122,35 @@ impl Octree {
                 node.mass = new_mass;
             }
 
-            // 2. Read state before any further mutations.
             let (cur_node_index, is_leaf) = {
                 let node = &self.nodes[node_idx as usize];
                 (node.node_index, node.is_leaf())
             };
 
             if cur_node_index == EMPTY && is_leaf {
-                // Empty leaf — store item here and continue.
                 self.nodes[node_idx as usize].node_index = item_idx;
                 continue;
             }
 
-            // Occupied leaf or internal node.
-            // If occupied leaf: displace existing item into a child octant first.
             if cur_node_index != EMPTY {
                 self.nodes[node_idx as usize].node_index = EMPTY;
                 let existing_pos = positions[cur_node_index as usize];
                 let oct = self.get_octant(node_idx, existing_pos);
                 let child = self.get_or_create_child(node_idx, oct);
-                self.insert_stack.push((child, cur_node_index, existing_pos));
+                self.insert_stack
+                    .push((child, cur_node_index, existing_pos));
             }
 
-            // Insert the new item into its octant.
             let oct = self.get_octant(node_idx, pos);
             let child = self.get_or_create_child(node_idx, oct);
             self.insert_stack.push((child, item_idx, pos));
         }
     }
 
-    // ------------------------------------------------------------------
-    // Helpers — inlined for the hot insertion path
-    // ------------------------------------------------------------------
-
     #[inline(always)]
     fn get_octant(&self, node_idx: u32, pos: Vec3A) -> usize {
         let n = &self.nodes[node_idx as usize];
         let center = (n.bounds_min + n.bounds_max) * 0.5;
-        // glam 0.33 BVec3A is a bitmask type with no .x/.y/.z fields.
-        // Scalar comparisons are equally fast and autovectorised by the compiler.
         let bx = (pos.x >= center.x) as usize;
         let by = (pos.y >= center.y) as usize;
         let bz = (pos.z >= center.z) as usize;
@@ -220,7 +163,6 @@ impl Octree {
             return self.nodes[parent_idx as usize].children[octant];
         }
 
-        // Copy bounds before push() to avoid aliasing after potential realloc.
         let (p_min, p_max) = {
             let p = &self.nodes[parent_idx as usize];
             (p.bounds_min, p.bounds_max)
@@ -244,14 +186,6 @@ impl Octree {
         new_idx
     }
 
-    // ------------------------------------------------------------------
-    // Iterative Barnes-Hut repulsion traversal
-    // ------------------------------------------------------------------
-    //
-    // WHY iterative: recursive descent prevents LLVM/wasm-opt from
-    // pipelining the inner arithmetic and limits stack depth for large graphs.
-    // The reusable `traversal_stack` eliminates per-frame heap allocations.
-
     pub fn compute_repulsion_iter(
         &mut self,
         pos: Vec3A,
@@ -268,9 +202,6 @@ impl Octree {
         self.traversal_stack.push(0u32);
 
         while let Some(node_idx) = self.traversal_stack.pop() {
-            // Copy out all scalar fields we need, releasing the borrow
-            // before we mutate traversal_stack (different field, but explicit
-            // scoping keeps this unambiguous for the borrow checker).
             let (mass, com, bounds_size, node_index, is_leaf, children) = {
                 let n = &self.nodes[node_idx as usize];
                 (
@@ -279,7 +210,7 @@ impl Octree {
                     (n.bounds_max.x - n.bounds_min.x).abs(),
                     n.node_index,
                     n.is_leaf(),
-                    n.children, // [u32;8] — Copy, 32 bytes on stack
+                    n.children,
                 )
             };
 
@@ -292,13 +223,11 @@ impl Octree {
             let dist = dist_sq.sqrt();
 
             if is_leaf || (bounds_size / dist) < theta {
-                // Treat this cell as a single body.
                 if node_index != self_item_idx {
                     let f_mag = (repulsion_const * mass) / (dist_sq * dist);
                     force_acc += delta * f_mag;
                 }
             } else {
-                // Subdivide — push non-empty children for traversal.
                 for &child_idx in &children {
                     if child_idx != EMPTY {
                         self.traversal_stack.push(child_idx);
@@ -310,15 +239,6 @@ impl Octree {
         force_acc
     }
 }
-
-// ---------------------------------------------------------------------------
-// PhysicsEngine
-// ---------------------------------------------------------------------------
-//
-// `flat_positions` has been removed.  Positions are stored only as Vec<Vec3A>
-// and exposed to JS via `positions_ptr()` / `positions_len()` at Vec3A stride
-// (4 f32s per node: x, y, z, pad).  This eliminates the O(N) `sync_flat_buffer`
-// scatter copy that previously ran on every physics step.
 
 pub struct PhysicsEngine {
     pub positions: Vec<Vec3A>,
@@ -336,8 +256,6 @@ impl PhysicsEngine {
         let velocities = vec![Vec3A::ZERO; node_count];
         let forces = vec![Vec3A::ZERO; node_count];
 
-        // Fibonacci sphere — uniform initial spread avoids symmetry-breaking
-        // degeneracies that would require many extra steps to resolve.
         let golden_ratio = (1.0 + 5.0_f32.sqrt()) / 2.0;
         let radius_scale = 50.0 * (node_count as f32).sqrt().max(1.0);
 
@@ -367,52 +285,38 @@ impl PhysicsEngine {
         }
     }
 
-    /// Accept stride-3 (packed xyz) positions from JavaScript.
-    /// Called during drag and on graph re-init.
     pub fn set_positions_flat(&mut self, flat_in: &[f32]) {
         let count = self.positions.len().min(flat_in.len() / 3);
         for i in 0..count {
-            self.positions[i] =
-                Vec3A::new(flat_in[i * 3], flat_in[i * 3 + 1], flat_in[i * 3 + 2]);
+            self.positions[i] = Vec3A::new(flat_in[i * 3], flat_in[i * 3 + 1], flat_in[i * 3 + 2]);
         }
         self.kinetic_energy = 1.0;
     }
 
-    /// Raw pointer to the Vec<Vec3A> data.
-    /// Layout per element: [x: f32, y: f32, z: f32, _pad: f32].
-    /// JavaScript reads with stride 4: positions[i*4], [i*4+1], [i*4+2].
     #[inline]
     pub fn positions_ptr(&self) -> *const f32 {
         self.positions.as_ptr() as *const f32
     }
 
-    /// Number of f32 values in the slice starting at `positions_ptr`.
-    /// Equals node_count × 4 (Vec3A stride).
     #[inline]
     pub fn positions_len(&self) -> usize {
         self.positions.len() * 4
     }
 
-    /// Advance the simulation by one step.
-    /// Returns `false` when the simulation has converged (kinetic energy below alpha_min).
     pub fn step(&mut self) -> bool {
         let n = self.positions.len();
         if n == 0 || self.kinetic_energy < self.params.alpha_min {
             return false;
         }
 
-        // ---- Reset force accumulators ----------------------------------------
         for f in self.forces.iter_mut() {
             *f = Vec3A::ZERO;
         }
 
-        // ---- Repulsion -------------------------------------------------------
         if n > OCTREE_THRESHOLD {
-            // Barnes-Hut O(N log N) — octree is rebuilt every frame because
-            // positions change every frame.
             self.octree.rebuild(&self.positions);
             for i in 0..n {
-                let pos_i = self.positions[i]; // Copy before &mut self.octree borrow
+                let pos_i = self.positions[i];
                 let rep = self.octree.compute_repulsion_iter(
                     pos_i,
                     i as u32,
@@ -422,8 +326,6 @@ impl PhysicsEngine {
                 self.forces[i] += rep;
             }
         } else {
-            // O(N²) brute-force — wasm-opt + -C target-feature=+simd128 will
-            // autovectorise this tight loop using WASM SIMD v128 instructions.
             let rep_const = self.params.repulsion;
             for i in 0..n {
                 let pi = self.positions[i];
@@ -439,7 +341,6 @@ impl PhysicsEngine {
             }
         }
 
-        // ---- Spring attraction on edges --------------------------------------
         {
             let k = self.params.attraction;
             let rest = self.params.link_distance;
@@ -457,7 +358,6 @@ impl PhysicsEngine {
             }
         }
 
-        // ---- Gravity (pull toward origin) -----------------------------------
         {
             let g = self.params.gravity;
             for i in 0..n {
@@ -465,7 +365,6 @@ impl PhysicsEngine {
             }
         }
 
-        // ---- Semi-implicit Euler integration --------------------------------
         {
             let dt = self.params.dt;
             let damping = self.params.damping;
@@ -477,7 +376,6 @@ impl PhysicsEngine {
                 let v = (self.velocities[i] + self.forces[i] * dt) * damping;
                 let v_sq = v.length_squared();
                 total_v_sq += v_sq;
-                // Clamp velocity without computing sqrt when unnecessary.
                 self.velocities[i] = if v_sq > max_v_sq {
                     v * (max_v / v_sq.sqrt())
                 } else {
@@ -489,7 +387,6 @@ impl PhysicsEngine {
             self.kinetic_energy = total_v_sq / (n as f32);
         }
 
-        // No sync_flat_buffer — JS reads positions directly via positions_ptr().
         true
     }
 }

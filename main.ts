@@ -1,4 +1,3 @@
-// main.ts
 import { Plugin, debounce } from "obsidian";
 import { Graph3DPluginSettings, DEFAULT_SETTINGS } from "./src/types";
 import { Graph3DView, VIEW_TYPE_3D_GRAPH } from "./src/view";
@@ -26,7 +25,6 @@ export default class Graph3DPlugin extends Plugin {
 			},
 		});
 
-		// Debounced update for live changes in the vault
 		const debouncedUpdate = debounce(
 			() => this.triggerLiveUpdate(),
 			300,
