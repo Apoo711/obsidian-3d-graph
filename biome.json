@@ -6,9 +6,9 @@
       "src/**/*.tsx",
       "src/**/*.js",
       "src/**/*.jsx",
-      "!**/node_modules/**",
-      "!**/target/**",
-      "!**/dist/**",
+      "!**/node_modules",
+      "!**/target",
+      "!**/dist",
       "!**/*.rs",
       "!**/*.toml"
     ]

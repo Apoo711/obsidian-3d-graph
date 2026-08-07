@@ -34,38 +34,19 @@ export type WorkerIncomingMessage =
   | { type: "STEP"; count?: number }
   | { type: "SET_PARAMS"; params: Partial<SimulationParams> }
   | { type: "SET_POSITIONS"; positions: Float32Array }
-  /**
-   * Ping-pong fallback: main thread returns the ArrayBuffer it received so the
-   * worker can reuse it for the next tick — zero per-tick allocation.
-   */
   | { type: "RETURN_BUFFER"; buffer: ArrayBuffer };
 
 export type WorkerOutgoingMessage =
   | {
       type: "READY";
-      /**
-       * Shared memory buffer (SAB fast path).  When present the worker writes
-       * positions into this buffer on every tick; the main thread reads from
-       * the same memory with no copy or transfer.
-       * Absent when SharedArrayBuffer is not available (no crossOriginIsolated).
-       */
       sharedBuffer?: SharedArrayBuffer;
-      /**
-       * f32 stride between consecutive node positions.
-       * Always 4 (Vec3A layout: x, y, z, _pad).
-       */
       positionsStride: 4;
       nodeCount: number;
     }
   | {
       type: "TICK";
-      /**
-       * Transferred positions buffer (non-SAB fallback only).
-       * Undefined when usedShared = true.
-       */
       positions?: Float32Array;
       frameTimeMs: number;
-      /** True when positions were written into the SharedArrayBuffer. */
       usedShared: boolean;
     }
   | { type: "ERROR"; error: string };
