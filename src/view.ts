@@ -107,6 +107,14 @@ export class Graph3DView extends ItemView {
 	private keyboardNewPos = new THREE.Vector3();
 	private keyboardNewTarget = new THREE.Vector3();
 
+	// Pre-allocated vectors for click-zoom (avoids 3× new THREE.Vector3 per click)
+	private reusableTargetPosition = new THREE.Vector3();
+
+	// Pre-allocated drag sync buffer — reallocated only when node count changes.
+	// Avoids a fresh Float32Array(N*3) allocation on every mouse-move event
+	// during a drag (which fires at 60+ Hz and triggered GC pauses).
+	private dragSyncBuffer: Float32Array = new Float32Array(0);
+
 	private frustum = new THREE.Frustum();
 	private projScreenMatrix = new THREE.Matrix4();
 	private geometryCache = new Map<NodeShape, THREE.BufferGeometry>();
@@ -838,15 +846,16 @@ export class Graph3DView extends ItemView {
 					if (this.settings.useWasmPhysics && this.graph) {
 						const nodes = this.graph.graphData()
 							.nodes as GraphNode[];
-						const flatPositions = new Float32Array(
-							nodes.length * 3,
-						);
-						for (let i = 0; i < nodes.length; i++) {
-							flatPositions[i * 3] = nodes[i].x || 0;
-							flatPositions[i * 3 + 1] = nodes[i].y || 0;
-							flatPositions[i * 3 + 2] = nodes[i].z || 0;
+						// Reuse the pre-allocated buffer; resize only when node count changes.
+						if (this.dragSyncBuffer.length !== nodes.length * 3) {
+							this.dragSyncBuffer = new Float32Array(nodes.length * 3);
 						}
-						this.physicsBridge.setPositions(flatPositions);
+						for (let i = 0; i < nodes.length; i++) {
+							this.dragSyncBuffer[i * 3] = nodes[i].x || 0;
+							this.dragSyncBuffer[i * 3 + 1] = nodes[i].y || 0;
+							this.dragSyncBuffer[i * 3 + 2] = nodes[i].z || 0;
+						}
+						this.physicsBridge.setPositions(this.dragSyncBuffer);
 					}
 				})
 				.onNodeDragEnd((node: GraphNode) => {
@@ -857,15 +866,16 @@ export class Graph3DView extends ItemView {
 					if (this.settings.useWasmPhysics && this.graph) {
 						const nodes = this.graph.graphData()
 							.nodes as GraphNode[];
-						const flatPositions = new Float32Array(
-							nodes.length * 3,
-						);
-						for (let i = 0; i < nodes.length; i++) {
-							flatPositions[i * 3] = nodes[i].x || 0;
-							flatPositions[i * 3 + 1] = nodes[i].y || 0;
-							flatPositions[i * 3 + 2] = nodes[i].z || 0;
+						// Reuse same pre-allocated drag buffer.
+						if (this.dragSyncBuffer.length !== nodes.length * 3) {
+							this.dragSyncBuffer = new Float32Array(nodes.length * 3);
 						}
-						this.physicsBridge.setPositions(flatPositions);
+						for (let i = 0; i < nodes.length; i++) {
+							this.dragSyncBuffer[i * 3] = nodes[i].x || 0;
+							this.dragSyncBuffer[i * 3 + 1] = nodes[i].y || 0;
+							this.dragSyncBuffer[i * 3 + 2] = nodes[i].z || 0;
+						}
+						this.physicsBridge.setPositions(this.dragSyncBuffer);
 					}
 				})
 				.onNodeClick((node: GraphNode, event: MouseEvent) =>
@@ -1107,18 +1117,12 @@ export class Graph3DView extends ItemView {
 						)
 						.then(() => {
 							this.physicsBridge.onTick((positions) => {
-								for (let i = 0; i < newData.nodes.length; i++) {
-									const node = newData.nodes[i];
-									node.x = positions[i * 3];
-									node.y = positions[i * 3 + 1];
-									node.z = positions[i * 3 + 2];
-									if (node.__threeObj) {
-										node.__threeObj.position.set(
-											node.x,
-											node.y,
-											node.z,
-										);
-									}
+								const nodes = newData.nodes;
+								const count = nodes.length;
+								for (let i = 0, base = 0; i < count; i++, base += 4) {
+									nodes[i].x = positions[base];
+									nodes[i].y = positions[base + 1];
+									nodes[i].z = positions[base + 2];
 								}
 								this.handleKeyboardMovement();
 							});
@@ -1552,19 +1556,25 @@ export class Graph3DView extends ItemView {
 				return;
 			}
 
-			const distance = camera.position.distanceTo(
+			// Use squared distances for the primary comparisons — avoids sqrt
+			// for the majority of nodes that are outside the visible range.
+			const distanceSq = camera.position.distanceToSquared(
 				this.reusableNodePosition,
 			);
 
 			const visibleDistance = this.settings.labelDistance;
 			const fadeStartDistance =
 				visibleDistance * this.settings.labelFadeThreshold;
+			const visibleDistSq = visibleDistance * visibleDistance;
+			const fadeStartDistSq = fadeStartDistance * fadeStartDistance;
 
 			let opacity = 0;
 
-			if (distance <= fadeStartDistance) {
+			if (distanceSq <= fadeStartDistSq) {
 				opacity = 1;
-			} else if (distance <= visibleDistance) {
+			} else if (distanceSq <= visibleDistSq) {
+				// Only compute sqrt for nodes inside the fade band (minority case).
+				const distance = Math.sqrt(distanceSq);
 				opacity =
 					1 -
 					(distance - fadeStartDistance) /
@@ -1585,7 +1595,9 @@ export class Graph3DView extends ItemView {
 				const mesh = this.nodeMeshes.get(node);
 
 				if (intersects.length > 0 && intersects[0].object !== mesh) {
-					if (intersects[0].distance < distance) {
+					// intersects[0].distance is the ray-to-hit distance (scalar).
+					// Compare against camera-to-node distance (sqrt only when needed).
+					if (intersects[0].distance < Math.sqrt(distanceSq)) {
 						opacity = 0;
 					}
 				}
@@ -1708,18 +1720,22 @@ export class Graph3DView extends ItemView {
 			});
 
 			if (node.__threeObj && this.settings.zoomOnClick) {
-				const distance = 40;
-				const nodePosition = new THREE.Vector3();
-				node.__threeObj.getWorldPosition(nodePosition);
+				const zoomDistance = 40;
+				// Reuse pre-allocated vectors — avoids 3× new THREE.Vector3 per click.
+				node.__threeObj.getWorldPosition(this.reusableNodePosition);
 				const cameraPosition = this.graph.camera().position;
-				const direction = new THREE.Vector3()
-					.subVectors(cameraPosition, nodePosition)
+				this.reusableDirection
+					.subVectors(cameraPosition, this.reusableNodePosition)
 					.normalize();
-				const targetPosition = new THREE.Vector3().addVectors(
-					nodePosition,
-					direction.multiplyScalar(distance),
+				this.reusableTargetPosition.addVectors(
+					this.reusableNodePosition,
+					this.reusableDirection.multiplyScalar(zoomDistance),
 				);
-				this.graph.cameraPosition(targetPosition, nodePosition, 1000);
+				this.graph.cameraPosition(
+					this.reusableTargetPosition,
+					this.reusableNodePosition,
+					1000,
+				);
 			}
 		}
 		this.updateNodeColorsDiff();

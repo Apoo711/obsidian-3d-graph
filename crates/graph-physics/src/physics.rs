@@ -1,6 +1,22 @@
 use glam::Vec3A;
 use serde::{Deserialize, Serialize};
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// Sentinel value meaning "no child" / "no item stored here".
+const EMPTY: u32 = u32::MAX;
+
+/// Switch from O(N²) brute-force to Barnes-Hut octree above this node count.
+/// Lowered from 500: at 64 nodes the octree overhead is negligible, and graphs
+/// between 64-500 nodes previously ran at O(N²) — the worst possible scaling.
+const OCTREE_THRESHOLD: usize = 64;
+
+// ---------------------------------------------------------------------------
+// SimulationParams
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SimulationParams {
@@ -31,18 +47,73 @@ impl Default for SimulationParams {
     }
 }
 
+// ---------------------------------------------------------------------------
+// OctreeNode — compact layout using u32 sentinels
+// ---------------------------------------------------------------------------
+//
+// WHY: The original used [Option<usize>; 8] + Option<usize> for child_indices
+// and node_index. On 64-bit, Option<usize> is 16 bytes (no niche), so:
+//   Old: [Option<usize>;8] = 128 bytes + Option<usize> = 16 bytes → ~196 B/node
+//   New: [u32;8]           =  32 bytes + u32            =  4 bytes → ~88  B/node
+// 2.2× reduction in node size → ~2.2× more octree nodes fit in L2 cache.
+
 pub struct OctreeNode {
-    pub center_of_mass: Vec3A,
-    pub mass: f32,
-    pub bounds_min: Vec3A,
-    pub bounds_max: Vec3A,
-    pub child_indices: [Option<usize>; 8],
-    pub node_index: Option<usize>,
+    pub center_of_mass: Vec3A, // 16 bytes (SIMD-aligned)
+    pub mass: f32,             //  4 bytes
+    pub bounds_min: Vec3A,     // 16 bytes
+    pub bounds_max: Vec3A,     // 16 bytes
+    /// Child octant indices into `Octree::nodes`.  EMPTY (u32::MAX) = no child.
+    pub children: [u32; 8], //  32 bytes
+    /// Index of the graph node stored at this leaf.  EMPTY = none.
+    pub node_index: u32, //  4 bytes
 }
 
-#[derive(Default)]
+impl OctreeNode {
+    #[inline]
+    fn new_leaf(bounds_min: Vec3A, bounds_max: Vec3A) -> Self {
+        Self {
+            center_of_mass: Vec3A::ZERO,
+            mass: 0.0,
+            bounds_min,
+            bounds_max,
+            children: [EMPTY; 8],
+            node_index: EMPTY,
+        }
+    }
+
+    #[inline(always)]
+    fn is_leaf(&self) -> bool {
+        // All 8 children are EMPTY.
+        self.children.iter().all(|&c| c == EMPTY)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Octree
+// ---------------------------------------------------------------------------
+//
+// WHY iterative instead of recursive:
+//   Recursive insert/traverse accumulates O(log₈ N) stack frames per call.
+//   For 10 k nodes that is ~14 nested Rust frames per insertion, repeated 10 k
+//   times = 140 k stack ops.  The iterative version reuses a pre-allocated Vec
+//   as an explicit stack — zero heap allocation in steady state.
+
 pub struct Octree {
     pub nodes: Vec<OctreeNode>,
+    /// Reusable work-stack for iterative insertion.  Cleared on each rebuild.
+    insert_stack: Vec<(u32, u32, Vec3A)>,
+    /// Reusable work-stack for iterative Barnes-Hut traversal.
+    traversal_stack: Vec<u32>,
+}
+
+impl Default for Octree {
+    fn default() -> Self {
+        Self {
+            nodes: Vec::new(),
+            insert_stack: Vec::with_capacity(64),
+            traversal_stack: Vec::with_capacity(64),
+        }
+    }
 }
 
 impl Octree {
@@ -52,180 +123,202 @@ impl Octree {
             return;
         }
 
-        if self.nodes.capacity() < positions.len() * 2 {
-            self.nodes
-                .reserve(positions.len() * 2 - self.nodes.capacity());
+        // Pre-reserve capacity to avoid Vec reallocations during insertion.
+        // Worst case: fully unbalanced tree ≈ 2×N nodes.
+        let cap = positions.len() * 2;
+        if self.nodes.capacity() < cap {
+            self.nodes.reserve(cap - self.nodes.capacity());
         }
 
-        let mut min = positions[0];
-        let mut max = positions[0];
+        // Compute tight AABB.
+        let mut bmin = positions[0];
+        let mut bmax = positions[0];
         for &p in positions.iter().skip(1) {
-            min = min.min(p);
-            max = max.max(p);
+            bmin = bmin.min(p);
+            bmax = bmax.max(p);
         }
 
-        let center = (min + max) * 0.5;
-        let extent = ((max - min) * 0.5).max(Vec3A::splat(1.0));
-        let half_size = extent.max_element();
+        // Expand to a cube so all octants are equal-sided.
+        let center = (bmin + bmax) * 0.5;
+        let half = ((bmax - bmin) * 0.5)
+            .max(Vec3A::splat(1.0))
+            .max_element();
+        let root_min = center - Vec3A::splat(half);
+        let root_max = center + Vec3A::splat(half);
 
-        min = center - Vec3A::splat(half_size);
-        max = center + Vec3A::splat(half_size);
-
-        let root = OctreeNode {
-            center_of_mass: Vec3A::ZERO,
-            mass: 0.0,
-            bounds_min: min,
-            bounds_max: max,
-            child_indices: [None; 8],
-            node_index: None,
-        };
-        self.nodes.push(root);
+        self.nodes.push(OctreeNode::new_leaf(root_min, root_max));
 
         for (idx, &pos) in positions.iter().enumerate() {
-            self.insert(0, idx, pos, positions, 0);
+            self.insert_iter(idx as u32, pos, positions);
         }
     }
 
-    fn insert(
-        &mut self,
-        node_idx: usize,
-        item_idx: usize,
-        pos: Vec3A,
-        positions: &[Vec3A],
-        depth: usize,
-    ) {
-        if depth > 16 {
-            return; // Safety guard against infinite recursion on coincident points
+    // ------------------------------------------------------------------
+    // Iterative insert
+    // ------------------------------------------------------------------
+    fn insert_iter(&mut self, item_idx: u32, pos: Vec3A, positions: &[Vec3A]) {
+        self.insert_stack.clear();
+        self.insert_stack.push((0u32, item_idx, pos));
+
+        while let Some((node_idx, item_idx, pos)) = self.insert_stack.pop() {
+            // 1. Update center-of-mass and mass (scoped borrow released immediately).
+            {
+                let node = &mut self.nodes[node_idx as usize];
+                let new_mass = node.mass + 1.0;
+                node.center_of_mass = (node.center_of_mass * node.mass + pos) / new_mass;
+                node.mass = new_mass;
+            }
+
+            // 2. Read state before any further mutations.
+            let (cur_node_index, is_leaf) = {
+                let node = &self.nodes[node_idx as usize];
+                (node.node_index, node.is_leaf())
+            };
+
+            if cur_node_index == EMPTY && is_leaf {
+                // Empty leaf — store item here and continue.
+                self.nodes[node_idx as usize].node_index = item_idx;
+                continue;
+            }
+
+            // Occupied leaf or internal node.
+            // If occupied leaf: displace existing item into a child octant first.
+            if cur_node_index != EMPTY {
+                self.nodes[node_idx as usize].node_index = EMPTY;
+                let existing_pos = positions[cur_node_index as usize];
+                let oct = self.get_octant(node_idx, existing_pos);
+                let child = self.get_or_create_child(node_idx, oct);
+                self.insert_stack.push((child, cur_node_index, existing_pos));
+            }
+
+            // Insert the new item into its octant.
+            let oct = self.get_octant(node_idx, pos);
+            let child = self.get_or_create_child(node_idx, oct);
+            self.insert_stack.push((child, item_idx, pos));
         }
-
-        let new_mass = self.nodes[node_idx].mass + 1.0;
-        self.nodes[node_idx].center_of_mass =
-            (self.nodes[node_idx].center_of_mass * self.nodes[node_idx].mass + pos) / new_mass;
-        self.nodes[node_idx].mass = new_mass;
-
-        if self.nodes[node_idx].node_index.is_none()
-            && self.nodes[node_idx]
-                .child_indices
-                .iter()
-                .all(|c| c.is_none())
-        {
-            self.nodes[node_idx].node_index = Some(item_idx);
-            return;
-        }
-
-        if let Some(existing_idx) = self.nodes[node_idx].node_index.take() {
-            let existing_pos = positions[existing_idx];
-            let octant = self.get_octant(node_idx, existing_pos);
-            let child_idx = self.get_or_create_child(node_idx, octant);
-            self.insert(child_idx, existing_idx, existing_pos, positions, depth + 1);
-        }
-
-        let octant = self.get_octant(node_idx, pos);
-        let child_idx = self.get_or_create_child(node_idx, octant);
-        self.insert(child_idx, item_idx, pos, positions, depth + 1);
     }
 
-    fn get_octant(&self, node_idx: usize, pos: Vec3A) -> usize {
-        let center = (self.nodes[node_idx].bounds_min + self.nodes[node_idx].bounds_max) * 0.5;
-        let mut octant = 0;
-        if pos.x >= center.x {
-            octant |= 1;
-        }
-        if pos.y >= center.y {
-            octant |= 2;
-        }
-        if pos.z >= center.z {
-            octant |= 4;
-        }
-        octant
+    // ------------------------------------------------------------------
+    // Helpers — inlined for the hot insertion path
+    // ------------------------------------------------------------------
+
+    #[inline(always)]
+    fn get_octant(&self, node_idx: u32, pos: Vec3A) -> usize {
+        let n = &self.nodes[node_idx as usize];
+        let center = (n.bounds_min + n.bounds_max) * 0.5;
+        // glam 0.33 BVec3A is a bitmask type with no .x/.y/.z fields.
+        // Scalar comparisons are equally fast and autovectorised by the compiler.
+        let bx = (pos.x >= center.x) as usize;
+        let by = (pos.y >= center.y) as usize;
+        let bz = (pos.z >= center.z) as usize;
+        bx | (by << 1) | (bz << 2)
     }
 
-    fn get_or_create_child(&mut self, parent_idx: usize, octant: usize) -> usize {
-        if let Some(child) = self.nodes[parent_idx].child_indices[octant] {
-            return child;
+    #[inline]
+    fn get_or_create_child(&mut self, parent_idx: u32, octant: usize) -> u32 {
+        if self.nodes[parent_idx as usize].children[octant] != EMPTY {
+            return self.nodes[parent_idx as usize].children[octant];
         }
 
-        let p_min = self.nodes[parent_idx].bounds_min;
-        let p_max = self.nodes[parent_idx].bounds_max;
+        // Copy bounds before push() to avoid aliasing after potential realloc.
+        let (p_min, p_max) = {
+            let p = &self.nodes[parent_idx as usize];
+            (p.bounds_min, p.bounds_max)
+        };
         let center = (p_min + p_max) * 0.5;
 
-        let mut c_min = p_min;
-        let mut c_max = center;
+        let c_min = Vec3A::new(
+            if (octant & 1) != 0 { center.x } else { p_min.x },
+            if (octant & 2) != 0 { center.y } else { p_min.y },
+            if (octant & 4) != 0 { center.z } else { p_min.z },
+        );
+        let c_max = Vec3A::new(
+            if (octant & 1) != 0 { p_max.x } else { center.x },
+            if (octant & 2) != 0 { p_max.y } else { center.y },
+            if (octant & 4) != 0 { p_max.z } else { center.z },
+        );
 
-        if (octant & 1) != 0 {
-            c_min.x = center.x;
-            c_max.x = p_max.x;
-        }
-        if (octant & 2) != 0 {
-            c_min.y = center.y;
-            c_max.y = p_max.y;
-        }
-        if (octant & 4) != 0 {
-            c_min.z = center.z;
-            c_max.z = p_max.z;
-        }
-
-        let new_child_idx = self.nodes.len();
-        self.nodes.push(OctreeNode {
-            center_of_mass: Vec3A::ZERO,
-            mass: 0.0,
-            bounds_min: c_min,
-            bounds_max: c_max,
-            child_indices: [None; 8],
-            node_index: None,
-        });
-
-        self.nodes[parent_idx].child_indices[octant] = Some(new_child_idx);
-        new_child_idx
+        let new_idx = self.nodes.len() as u32;
+        self.nodes.push(OctreeNode::new_leaf(c_min, c_max));
+        self.nodes[parent_idx as usize].children[octant] = new_idx;
+        new_idx
     }
 
-    pub fn compute_repulsion(
-        &self,
-        node_idx: usize,
+    // ------------------------------------------------------------------
+    // Iterative Barnes-Hut repulsion traversal
+    // ------------------------------------------------------------------
+    //
+    // WHY iterative: recursive descent prevents LLVM/wasm-opt from
+    // pipelining the inner arithmetic and limits stack depth for large graphs.
+    // The reusable `traversal_stack` eliminates per-frame heap allocations.
+
+    pub fn compute_repulsion_iter(
+        &mut self,
         pos: Vec3A,
-        self_item_idx: usize,
+        self_item_idx: u32,
         repulsion_const: f32,
         theta: f32,
-        force_acc: &mut Vec3A,
-        depth: usize,
-    ) {
-        if depth > 16 {
-            return;
+    ) -> Vec3A {
+        let mut force_acc = Vec3A::ZERO;
+        if self.nodes.is_empty() {
+            return force_acc;
         }
 
-        let node = &self.nodes[node_idx];
-        if node.mass == 0.0 {
-            return;
-        }
+        self.traversal_stack.clear();
+        self.traversal_stack.push(0u32);
 
-        let delta = pos - node.center_of_mass;
-        let dist_sq = delta.length_squared().max(1.0);
-        let dist = dist_sq.sqrt();
+        while let Some(node_idx) = self.traversal_stack.pop() {
+            // Copy out all scalar fields we need, releasing the borrow
+            // before we mutate traversal_stack (different field, but explicit
+            // scoping keeps this unambiguous for the borrow checker).
+            let (mass, com, bounds_size, node_index, is_leaf, children) = {
+                let n = &self.nodes[node_idx as usize];
+                (
+                    n.mass,
+                    n.center_of_mass,
+                    (n.bounds_max.x - n.bounds_min.x).abs(),
+                    n.node_index,
+                    n.is_leaf(),
+                    n.children, // [u32;8] — Copy, 32 bytes on stack
+                )
+            };
 
-        let size = (node.bounds_max.x - node.bounds_min.x).abs();
-
-        if node.child_indices.iter().all(|c| c.is_none()) || (size / dist) < theta {
-            if node.node_index != Some(self_item_idx) {
-                let f_mag = (repulsion_const * node.mass) / (dist_sq * dist);
-                *force_acc += delta * f_mag;
+            if mass == 0.0 {
+                continue;
             }
-        } else {
-            for child_opt in node.child_indices.iter() {
-                if let Some(child_idx) = child_opt {
-                    self.compute_repulsion(
-                        *child_idx,
-                        pos,
-                        self_item_idx,
-                        repulsion_const,
-                        theta,
-                        force_acc,
-                        depth + 1,
-                    );
+
+            let delta = pos - com;
+            let dist_sq = delta.length_squared().max(1.0);
+            let dist = dist_sq.sqrt();
+
+            if is_leaf || (bounds_size / dist) < theta {
+                // Treat this cell as a single body.
+                if node_index != self_item_idx {
+                    let f_mag = (repulsion_const * mass) / (dist_sq * dist);
+                    force_acc += delta * f_mag;
+                }
+            } else {
+                // Subdivide — push non-empty children for traversal.
+                for &child_idx in &children {
+                    if child_idx != EMPTY {
+                        self.traversal_stack.push(child_idx);
+                    }
                 }
             }
         }
+
+        force_acc
     }
 }
+
+// ---------------------------------------------------------------------------
+// PhysicsEngine
+// ---------------------------------------------------------------------------
+//
+// `flat_positions` has been removed.  Positions are stored only as Vec<Vec3A>
+// and exposed to JS via `positions_ptr()` / `positions_len()` at Vec3A stride
+// (4 f32s per node: x, y, z, pad).  This eliminates the O(N) `sync_flat_buffer`
+// scatter copy that previously ran on every physics step.
 
 pub struct PhysicsEngine {
     pub positions: Vec<Vec3A>,
@@ -233,7 +326,6 @@ pub struct PhysicsEngine {
     pub forces: Vec<Vec3A>,
     pub edges: Vec<u32>,
     pub params: SimulationParams,
-    pub flat_positions: Vec<f32>,
     pub kinetic_energy: f32,
     octree: Octree,
 }
@@ -244,6 +336,8 @@ impl PhysicsEngine {
         let velocities = vec![Vec3A::ZERO; node_count];
         let forces = vec![Vec3A::ZERO; node_count];
 
+        // Fibonacci sphere — uniform initial spread avoids symmetry-breaking
+        // degeneracies that would require many extra steps to resolve.
         let golden_ratio = (1.0 + 5.0_f32.sqrt()) / 2.0;
         let radius_scale = 50.0 * (node_count as f32).sqrt().max(1.0);
 
@@ -252,19 +346,15 @@ impl PhysicsEngine {
             let phi = if node_count <= 1 {
                 0.0
             } else {
-                ((1.0 - 2.0 * (i as f32 + 0.5) / (node_count as f32)).clamp(-1.0, 1.0)).acos()
+                ((1.0 - 2.0 * (i as f32 + 0.5) / node_count as f32).clamp(-1.0, 1.0)).acos()
             };
-            let r = radius_scale * ((i as f32 + 1.0) / (node_count as f32)).sqrt();
-
-            let x = r * phi.sin() * theta.cos();
-            let y = r * phi.sin() * theta.sin();
-            let z = r * phi.cos();
-
-            positions.push(Vec3A::new(x, y, z));
+            let r = radius_scale * ((i as f32 + 1.0) / node_count as f32).sqrt();
+            positions.push(Vec3A::new(
+                r * phi.sin() * theta.cos(),
+                r * phi.sin() * theta.sin(),
+                r * phi.cos(),
+            ));
         }
-
-        let mut flat_positions = vec![0.0; node_count * 3];
-        Self::sync_flat_buffer(&positions, &mut flat_positions);
 
         Self {
             positions,
@@ -272,129 +362,134 @@ impl PhysicsEngine {
             forces,
             edges,
             params,
-            flat_positions,
             kinetic_energy: 1.0,
             octree: Octree::default(),
         }
     }
 
-    fn sync_flat_buffer(positions: &[Vec3A], flat: &mut [f32]) {
-        for (i, p) in positions.iter().enumerate() {
-            flat[i * 3] = p.x;
-            flat[i * 3 + 1] = p.y;
-            flat[i * 3 + 2] = p.z;
-        }
-    }
-
+    /// Accept stride-3 (packed xyz) positions from JavaScript.
+    /// Called during drag and on graph re-init.
     pub fn set_positions_flat(&mut self, flat_in: &[f32]) {
         let count = self.positions.len().min(flat_in.len() / 3);
         for i in 0..count {
-            self.positions[i] = Vec3A::new(flat_in[i * 3], flat_in[i * 3 + 1], flat_in[i * 3 + 2]);
+            self.positions[i] =
+                Vec3A::new(flat_in[i * 3], flat_in[i * 3 + 1], flat_in[i * 3 + 2]);
         }
         self.kinetic_energy = 1.0;
-        Self::sync_flat_buffer(&self.positions, &mut self.flat_positions);
     }
 
+    /// Raw pointer to the Vec<Vec3A> data.
+    /// Layout per element: [x: f32, y: f32, z: f32, _pad: f32].
+    /// JavaScript reads with stride 4: positions[i*4], [i*4+1], [i*4+2].
+    #[inline]
+    pub fn positions_ptr(&self) -> *const f32 {
+        self.positions.as_ptr() as *const f32
+    }
+
+    /// Number of f32 values in the slice starting at `positions_ptr`.
+    /// Equals node_count × 4 (Vec3A stride).
+    #[inline]
+    pub fn positions_len(&self) -> usize {
+        self.positions.len() * 4
+    }
+
+    /// Advance the simulation by one step.
+    /// Returns `false` when the simulation has converged (kinetic energy below alpha_min).
     pub fn step(&mut self) -> bool {
         let n = self.positions.len();
-        if n == 0 {
+        if n == 0 || self.kinetic_energy < self.params.alpha_min {
             return false;
         }
 
-        if self.kinetic_energy < self.params.alpha_min {
-            return false;
-        }
-
+        // ---- Reset force accumulators ----------------------------------------
         for f in self.forces.iter_mut() {
             *f = Vec3A::ZERO;
         }
 
-        if n > 500 {
+        // ---- Repulsion -------------------------------------------------------
+        if n > OCTREE_THRESHOLD {
+            // Barnes-Hut O(N log N) — octree is rebuilt every frame because
+            // positions change every frame.
             self.octree.rebuild(&self.positions);
             for i in 0..n {
-                let mut rep_force = Vec3A::ZERO;
-                self.octree.compute_repulsion(
-                    0,
-                    self.positions[i],
-                    i,
+                let pos_i = self.positions[i]; // Copy before &mut self.octree borrow
+                let rep = self.octree.compute_repulsion_iter(
+                    pos_i,
+                    i as u32,
                     self.params.repulsion,
                     self.params.theta,
-                    &mut rep_force,
-                    0,
                 );
-                self.forces[i] += rep_force;
+                self.forces[i] += rep;
             }
         } else {
+            // O(N²) brute-force — wasm-opt + -C target-feature=+simd128 will
+            // autovectorise this tight loop using WASM SIMD v128 instructions.
             let rep_const = self.params.repulsion;
             for i in 0..n {
-                let pos_i = self.positions[i];
-                let mut f_acc = Vec3A::ZERO;
+                let pi = self.positions[i];
+                let mut fi = Vec3A::ZERO;
                 for j in (i + 1)..n {
-                    let delta = pos_i - self.positions[j];
+                    let delta = pi - self.positions[j];
                     let dist_sq = delta.length_squared().max(1.0);
-                    let f_mag = rep_const / (dist_sq * dist_sq.sqrt());
-                    let force = delta * f_mag;
-
-                    f_acc += force;
-                    self.forces[j] -= force;
+                    let f = delta * (rep_const / (dist_sq * dist_sq.sqrt()));
+                    fi += f;
+                    self.forces[j] -= f;
                 }
-                self.forces[i] += f_acc;
+                self.forces[i] += fi;
             }
         }
 
-        let edge_count = self.edges.len() / 2;
-        let k = self.params.attraction;
-        let rest_len = self.params.link_distance;
-
-        for e in 0..edge_count {
-            let src_idx = e * 2;
-            let tgt_idx = e * 2 + 1;
-            if tgt_idx >= self.edges.len() {
-                break;
-            }
-
-            let src = self.edges[src_idx] as usize;
-            let tgt = self.edges[tgt_idx] as usize;
-
-            if src < n && tgt < n && src != tgt {
-                let delta = self.positions[tgt] - self.positions[src];
-                let dist = delta.length().max(0.1);
-                let stretch = dist - rest_len;
-                let force = (delta / dist) * (k * stretch);
-
-                self.forces[src] += force;
-                self.forces[tgt] -= force;
+        // ---- Spring attraction on edges --------------------------------------
+        {
+            let k = self.params.attraction;
+            let rest = self.params.link_distance;
+            let edge_count = self.edges.len() / 2;
+            for e in 0..edge_count {
+                let src = self.edges[e * 2] as usize;
+                let tgt = self.edges[e * 2 + 1] as usize;
+                if src < n && tgt < n && src != tgt {
+                    let delta = self.positions[tgt] - self.positions[src];
+                    let dist = delta.length().max(0.1);
+                    let force = delta * (k * (dist - rest) / dist);
+                    self.forces[src] += force;
+                    self.forces[tgt] -= force;
+                }
             }
         }
 
-        let g = self.params.gravity;
-        for i in 0..n {
-            self.forces[i] -= self.positions[i] * g;
+        // ---- Gravity (pull toward origin) -----------------------------------
+        {
+            let g = self.params.gravity;
+            for i in 0..n {
+                self.forces[i] -= self.positions[i] * g;
+            }
         }
 
-        let dt = self.params.dt;
-        let damping = self.params.damping;
-        let max_v = self.params.max_velocity;
+        // ---- Semi-implicit Euler integration --------------------------------
+        {
+            let dt = self.params.dt;
+            let damping = self.params.damping;
+            let max_v = self.params.max_velocity;
+            let max_v_sq = max_v * max_v;
+            let mut total_v_sq = 0.0_f32;
 
-        let mut total_v_sq = 0.0;
-        for i in 0..n {
-            let v = (self.velocities[i] + self.forces[i] * dt) * damping;
-            let v_sq = v.length_squared();
-            total_v_sq += v_sq;
+            for i in 0..n {
+                let v = (self.velocities[i] + self.forces[i] * dt) * damping;
+                let v_sq = v.length_squared();
+                total_v_sq += v_sq;
+                // Clamp velocity without computing sqrt when unnecessary.
+                self.velocities[i] = if v_sq > max_v_sq {
+                    v * (max_v / v_sq.sqrt())
+                } else {
+                    v
+                };
+                self.positions[i] += self.velocities[i] * dt;
+            }
 
-            let v_len = v_sq.sqrt();
-            let v_clamped = if v_len > max_v {
-                (v / v_len) * max_v
-            } else {
-                v
-            };
-
-            self.velocities[i] = v_clamped;
-            self.positions[i] += v_clamped * dt;
+            self.kinetic_energy = total_v_sq / (n as f32);
         }
 
-        self.kinetic_energy = total_v_sq / (n as f32);
-        Self::sync_flat_buffer(&self.positions, &mut self.flat_positions);
+        // No sync_flat_buffer — JS reads positions directly via positions_ptr().
         true
     }
 }

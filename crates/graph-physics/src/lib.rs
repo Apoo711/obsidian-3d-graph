@@ -39,12 +39,30 @@ impl GraphPhysicsWasm {
         to_value(&self.engine.params).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Accept packed stride-3 (xyz xyz ...) positions from JavaScript.
     pub fn set_positions(&mut self, positions_flat: &[f32]) {
         self.engine.set_positions_flat(positions_flat);
     }
 
+    /// Advance the simulation by exactly one step.
+    /// Returns false when kinetic energy drops below alpha_min.
     pub fn step(&mut self) -> bool {
         self.engine.step()
+    }
+
+    /// Advance the simulation by up to `count` steps.
+    /// Stops early if the simulation converges.  Returns false when converged.
+    /// Reduces JS↔WASM call overhead for batched ticking.
+    pub fn step_n(&mut self, count: u32) -> bool {
+        let mut active = false;
+        for _ in 0..count {
+            if self.engine.step() {
+                active = true;
+            } else {
+                break;
+            }
+        }
+        active
     }
 
     pub fn energy(&self) -> f32 {
@@ -55,11 +73,23 @@ impl GraphPhysicsWasm {
         self.engine.kinetic_energy < self.engine.params.alpha_min
     }
 
+    /// Raw pointer to position data inside WASM linear memory.
+    /// Layout: Vec3A → [x: f32, y: f32, z: f32, _pad: f32].
+    /// JavaScript reads as Float32Array with stride 4:
+    ///   x = buf[i*4], y = buf[i*4+1], z = buf[i*4+2].
     pub fn positions_ptr(&self) -> *const f32 {
-        self.engine.flat_positions.as_ptr()
+        self.engine.positions_ptr()
     }
 
+    /// Total number of f32 values starting at positions_ptr.
+    /// Equals node_count × 4  (Vec3A stride = 4 f32s).
     pub fn positions_len(&self) -> usize {
-        self.engine.flat_positions.len()
+        self.engine.positions_len()
+    }
+
+    /// The stride (in f32 units) between consecutive node positions.
+    /// Always 4 for Vec3A.  Exposed so JavaScript can read this dynamically.
+    pub fn positions_stride(&self) -> usize {
+        4
     }
 }
