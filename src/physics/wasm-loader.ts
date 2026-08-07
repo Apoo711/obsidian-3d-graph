@@ -6,14 +6,12 @@ let _cachedWasmBuffer: ArrayBuffer | null = null;
 let _cachedWorkerBlobUrl: string | null = null;
 
 export function getWasmArrayBuffer(): ArrayBuffer {
-  if (_cachedWasmBuffer !== null) {
-    return _cachedWasmBuffer;
+  if (_cachedWasmBuffer === null) {
+    const binaryString = atob(wasmBase64);
+    const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
+    _cachedWasmBuffer = bytes.buffer;
   }
-
-  const binaryString = atob(wasmBase64);
-  const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
-  _cachedWasmBuffer = bytes.buffer;
-  return _cachedWasmBuffer;
+  return _cachedWasmBuffer.slice(0);
 }
 
 export function createWorkerBlobUrl(): string {

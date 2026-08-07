@@ -437,23 +437,6 @@ export class Graph3DView extends ItemView {
   private renderAppearanceSettings(container: HTMLElement) {
     new Setting(container).setHeading().setName("Appearance");
 
-    new Setting(container)
-      .setName("Performance Mode")
-      .setDesc("Lowers geometry detail, disables link curvature and labels for better performance.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.settings.performanceMode).onChange(async (value) => {
-          this.settings.performanceMode = value;
-          this.clearResourceCaches();
-          await this.plugin.saveSettings();
-          this.updateDisplay();
-          if (value) {
-            this.graph.graphData().nodes.forEach((node: GraphNode) => this.removeNodeSprite(node));
-          } else {
-            this.updateLabels();
-          }
-        }),
-      );
-
     const updateDisplayAndColors = async () => {
       await this.plugin.saveSettings();
       this.updateDisplay();
@@ -532,26 +515,6 @@ export class Graph3DView extends ItemView {
   private renderLabelSettings(container: HTMLElement) {
     new Setting(container).setHeading().setName("Labels");
 
-    new Setting(container)
-      .setName("Show node labels")
-      .setDesc("If you enable this, please reopen the graph view to see the labels.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.settings.showNodeLabels).onChange(async (value) => {
-          this.settings.showNodeLabels = value;
-          await this.plugin.saveSettings();
-
-          if (!value) {
-            this.graph.graphData().nodes.forEach((node: GraphNode) =>
-              this.cleanupNode(node, {
-                cleanMesh: false,
-                cleanGroup: false,
-              }),
-            );
-          }
-          this.updateDisplay();
-        }),
-      );
-
     new Setting(container).setName("Show labels on hover/highlight only").addToggle((toggle) =>
       toggle.setValue(this.settings.showLabelsOnHoverOnly).onChange(async (value) => {
         this.settings.showLabelsOnHoverOnly = value;
@@ -570,16 +533,6 @@ export class Graph3DView extends ItemView {
           await this.plugin.saveSettings();
         }),
     );
-
-    new Setting(container)
-      .setName("Prevent label occlusion")
-      .setDesc("Can impact performance on large graphs.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.settings.labelOcclusion).onChange(async (value) => {
-          this.settings.labelOcclusion = value;
-          await this.plugin.saveSettings();
-        }),
-      );
   }
 
   private renderInteractionSettings(container: HTMLElement) {
@@ -677,18 +630,6 @@ export class Graph3DView extends ItemView {
           await forceChangeHandler();
         }),
     );
-
-    new Setting(container)
-      .setName("Use Rust WASM Physics Engine")
-      .setDesc(
-        "High-performance 128-bit SIMD force engine running in a Web Worker for multi-thousand node scaling.",
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(this.settings.useWasmPhysics).onChange(async (value) => {
-          this.settings.useWasmPhysics = value;
-          await forceChangeHandler();
-        }),
-      );
   }
 
   private initializeForces() {

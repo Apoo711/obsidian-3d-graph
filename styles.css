@@ -61,14 +61,19 @@
 	position: absolute;
 	top: 45px;
 	right: 0;
-	width: 350px;
+	width: 360px;
 	max-height: 80vh;
 	overflow-y: auto;
+	box-sizing: border-box;
 	background-color: var(--background-secondary);
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 8px;
-	padding: 16px;
+	padding: 12px 14px;
 	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.graph-3d-settings-panel * {
+	box-sizing: border-box;
 }
 
 .graph-3d-settings-panel.is-open {
@@ -77,11 +82,75 @@
 
 .graph-3d-settings-panel .setting-item {
 	border-top: 1px solid var(--background-modifier-border);
-	padding: 10px 16px !important;
+	padding: 10px 4px !important;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
 }
 
 .graph-3d-settings-panel .setting-item:first-child {
 	border-top: none;
+}
+
+.graph-3d-settings-panel .setting-item-heading {
+	padding-top: 6px !important;
+	padding-bottom: 4px !important;
+}
+
+.graph-3d-settings-panel .setting-item-info {
+	flex: 1 1 auto;
+	min-width: 0;
+	margin-right: 8px;
+}
+
+.graph-3d-settings-panel .setting-item-name {
+	font-size: var(--font-ui-small);
+	word-break: break-word;
+}
+
+.graph-3d-settings-panel .setting-item-description {
+	font-size: var(--font-xs);
+	color: var(--text-muted);
+}
+
+.graph-3d-settings-panel .setting-item-control {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 1 auto;
+	max-width: 100%;
+}
+
+.graph-3d-settings-panel .setting-item-control:only-child {
+	width: 100%;
+	justify-content: space-between;
+}
+
+.graph-3d-settings-panel .setting-item-control input[type="text"],
+.graph-3d-settings-panel .setting-item-control input[type="search"] {
+	flex: 1 1 0;
+	min-width: 0;
+	width: 100%;
+}
+
+.graph-3d-settings-panel .setting-item-control select {
+	flex: 0 0 auto;
+	max-width: 110px;
+}
+
+.graph-3d-settings-panel .setting-item-control .checkbox-container {
+	flex: 0 0 auto;
+	margin: 0;
+}
+
+.graph-3d-settings-panel .setting-item-control .clickable-icon {
+	flex: 0 0 auto;
+	margin: 0;
+}
+
+.graph-3d-settings-panel .setting-item-control input[type="color"] {
+	flex: 0 0 auto;
 }
 
 .graph-3d-counter {

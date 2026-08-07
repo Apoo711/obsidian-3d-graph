@@ -538,6 +538,22 @@ export class Graph3DSettingsTab extends PluginSettingTab {
     );
 
     new Setting(containerEl).setName("Forces").setHeading();
+    new Setting(containerEl)
+      .setName("Use Rust WASM Physics Engine")
+      .setDesc(
+        "High-performance 128-bit SIMD force engine running in a Web Worker for multi-thousand node scaling.",
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.useWasmPhysics).onChange(async (value) => {
+          this.plugin.settings.useWasmPhysics = value;
+          await this.plugin.saveSettings();
+          this.triggerUpdate({
+            redrawData: true,
+            useCache: false,
+            reheat: true,
+          });
+        }),
+      );
     const forceSettingHandler = async (
       value: number,
       setting: "centerForce" | "repelForce" | "linkForce",
