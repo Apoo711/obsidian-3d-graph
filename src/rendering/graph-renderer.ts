@@ -173,7 +173,7 @@ export class InstancedGraphRenderer {
       colorAttr.setUsage(THREE.DynamicDrawUsage);
 
       const scaleAttr = new THREE.InstancedBufferAttribute(scaleData, 1, false);
-      scaleAttr.setUsage(THREE.StaticDrawUsage);
+      scaleAttr.setUsage(THREE.DynamicDrawUsage);
 
       instancedGeo.setAttribute("instanceTranslation", translationAttr);
       instancedGeo.setAttribute("instanceColor", colorAttr);
@@ -400,6 +400,51 @@ export class InstancedGraphRenderer {
     }
 
     return closestIdx;
+  }
+
+  private frustum = new THREE.Frustum();
+  private projScreenMatrix = new THREE.Matrix4();
+
+  public updateFrustumCulling(camera: THREE.Camera, positions: Float32Array): void {
+    if (this.nodeCount === 0) return;
+
+    this.projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.projScreenMatrix);
+
+    const planes = this.frustum.planes;
+    const stride = this.positionsStride;
+
+    for (const bucket of this.shapeBuckets.values()) {
+      if (!bucket.geometry || !bucket.scaleAttr) continue;
+      const scales = bucket.scaleAttr.array as Float32Array;
+      const indices = bucket.indices;
+      const count = indices.length;
+
+      for (let localIdx = 0; localIdx < count; localIdx++) {
+        const globalIdx = indices[localIdx];
+        const src = globalIdx * stride;
+        const x = positions[src];
+        const y = positions[src + 1];
+        const z = positions[src + 2];
+        const r = this.nodeScales[globalIdx] || 3.0;
+
+        let inside = true;
+        for (let p = 0; p < 6; p++) {
+          const plane = planes[p];
+          if (plane.normal.x * x + plane.normal.y * y + plane.normal.z * z + plane.constant < -r) {
+            inside = false;
+            break;
+          }
+        }
+
+        const currentScale = scales[localIdx];
+        const targetScale = inside ? this.nodeScales[globalIdx] : 0.0;
+        if (currentScale !== targetScale) {
+          scales[localIdx] = targetScale;
+          bucket.scaleAttr.needsUpdate = true;
+        }
+      }
+    }
   }
 
   public clear(): void {

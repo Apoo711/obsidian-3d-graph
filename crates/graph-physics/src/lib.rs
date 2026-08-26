@@ -90,4 +90,18 @@ impl GraphPhysicsWasm {
     pub fn node_degrees(&self) -> Vec<u32> {
         self.engine.node_degrees()
     }
+
+    pub fn rebuild_spatial_hash(&mut self, cell_size: f32) {
+        self.engine.rebuild_spatial_hash(cell_size);
+    }
+
+    pub fn query_radius(&self, cx: f32, cy: f32, cz: f32, radius: f32) -> Vec<u32> {
+        self.engine
+            .query_radius(glam::Vec3A::new(cx, cy, cz), radius)
+    }
+
+    pub fn find_nearest(&self, px: f32, py: f32, pz: f32, max_dist: f32) -> Option<u32> {
+        self.engine
+            .find_nearest(glam::Vec3A::new(px, py, pz), max_dist)
+    }
 }
