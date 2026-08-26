@@ -40,8 +40,10 @@ pub struct OctreeNode {
     pub mass: f32,
     pub bounds_min: Vec3A,
     pub bounds_max: Vec3A,
+    pub center: Vec3A,
     pub children: [u32; 8],
     pub node_index: u32,
+    pub child_count: u8,
 }
 
 impl OctreeNode {
@@ -52,14 +54,16 @@ impl OctreeNode {
             mass: 0.0,
             bounds_min,
             bounds_max,
+            center: (bounds_min + bounds_max) * 0.5,
             children: [EMPTY; 8],
             node_index: EMPTY,
+            child_count: 0,
         }
     }
 
     #[inline(always)]
     fn is_leaf(&self) -> bool {
-        self.children.iter().all(|&c| c == EMPTY)
+        self.child_count == 0
     }
 }
 
@@ -150,7 +154,7 @@ impl Octree {
     #[inline(always)]
     fn get_octant(&self, node_idx: u32, pos: Vec3A) -> usize {
         let n = &self.nodes[node_idx as usize];
-        let center = (n.bounds_min + n.bounds_max) * 0.5;
+        let center = n.center;
         let bx = (pos.x >= center.x) as usize;
         let by = (pos.y >= center.y) as usize;
         let bz = (pos.z >= center.z) as usize;
@@ -163,11 +167,10 @@ impl Octree {
             return self.nodes[parent_idx as usize].children[octant];
         }
 
-        let (p_min, p_max) = {
+        let (p_min, p_max, center) = {
             let p = &self.nodes[parent_idx as usize];
-            (p.bounds_min, p.bounds_max)
+            (p.bounds_min, p.bounds_max, p.center)
         };
-        let center = (p_min + p_max) * 0.5;
 
         let c_min = Vec3A::new(
             if (octant & 1) != 0 { center.x } else { p_min.x },
@@ -183,6 +186,7 @@ impl Octree {
         let new_idx = self.nodes.len() as u32;
         self.nodes.push(OctreeNode::new_leaf(c_min, c_max));
         self.nodes[parent_idx as usize].children[octant] = new_idx;
+        self.nodes[parent_idx as usize].child_count += 1;
         new_idx
     }
 
@@ -202,33 +206,24 @@ impl Octree {
         self.traversal_stack.push(0u32);
 
         while let Some(node_idx) = self.traversal_stack.pop() {
-            let (mass, com, bounds_size, node_index, is_leaf, children) = {
-                let n = &self.nodes[node_idx as usize];
-                (
-                    n.mass,
-                    n.center_of_mass,
-                    (n.bounds_max.x - n.bounds_min.x).abs(),
-                    n.node_index,
-                    n.is_leaf(),
-                    n.children,
-                )
-            };
+            let n = &self.nodes[node_idx as usize];
 
-            if mass == 0.0 {
+            if n.mass == 0.0 {
                 continue;
             }
 
-            let delta = pos - com;
+            let delta = pos - n.center_of_mass;
             let dist_sq = delta.length_squared().max(1.0);
             let dist = dist_sq.sqrt();
+            let bounds_size = (n.bounds_max.x - n.bounds_min.x).abs();
 
-            if is_leaf || (bounds_size / dist) < theta {
-                if node_index != self_item_idx {
-                    let f_mag = (repulsion_const * mass) / (dist_sq * dist);
+            if n.child_count == 0 || (bounds_size / dist) < theta {
+                if n.node_index != self_item_idx {
+                    let f_mag = (repulsion_const * n.mass) / (dist_sq * dist);
                     force_acc += delta * f_mag;
                 }
             } else {
-                for &child_idx in &children {
+                for &child_idx in &n.children {
                     if child_idx != EMPTY {
                         self.traversal_stack.push(child_idx);
                     }

@@ -9,10 +9,11 @@ import {
   type WorkspaceLeaf,
 } from "obsidian";
 import * as THREE from "three";
-import SpriteText from "three-spritetext";
 import type Graph3DPlugin from "../main";
 import { PhysicsBridge } from "./physics/physics-bridge";
 import { createWorkerBlobUrl, getWasmArrayBuffer } from "./physics/wasm-loader";
+import { InstancedGraphRenderer } from "./rendering/graph-renderer";
+import { InstancedLabelRenderer } from "./rendering/label-renderer";
 import {
   ColorGroup,
   type Filter,
@@ -47,6 +48,14 @@ export class Graph3DView extends ItemView {
   private resizeObserver: ResizeObserver;
   private raycaster = new THREE.Raycaster();
 
+  private instancedRenderer: InstancedGraphRenderer | null = null;
+  private labelRenderer: InstancedLabelRenderer | null = null;
+  private currentPositions: Float32Array = new Float32Array(0);
+  private currentNodes: GraphNode[] = [];
+  private currentLinks: GraphLink[] = [];
+  private nodeIdToIndex = new Map<string, number>();
+  private linkToIndex = new Map<GraphLink, number>();
+
   private reusableNodePosition = new THREE.Vector3();
   private reusableDirection = new THREE.Vector3();
   private cachedOccluders: THREE.Mesh[] = [];
@@ -54,7 +63,6 @@ export class Graph3DView extends ItemView {
   private readonly RAYCAST_CULL_DISTANCE = 800;
 
   private nodeMeshes = new WeakMap<GraphNode, THREE.Mesh>();
-  private nodeSprites = new Map<GraphNode, SpriteText>();
 
   private highlightedNodes = new Set<string>();
   private highlightedLinks = new Set<object>();
@@ -696,59 +704,170 @@ export class Graph3DView extends ItemView {
     }
   }
 
+  private syncDragPositionsToWasm(node?: GraphNode) {
+    if (!this.settings.useWasmPhysics || this.currentPositions.length === 0) return;
+    if (this.dragSyncBuffer.length !== this.currentPositions.length) {
+      this.dragSyncBuffer = new Float32Array(this.currentPositions.length);
+    }
+    this.dragSyncBuffer.set(this.currentPositions);
+    if (node) {
+      const idx = this.nodeIdToIndex.get(node.id);
+      if (idx !== undefined) {
+        this.dragSyncBuffer[idx * 4] = node.x || 0;
+        this.dragSyncBuffer[idx * 4 + 1] = node.y || 0;
+        this.dragSyncBuffer[idx * 4 + 2] = node.z || 0;
+      }
+    }
+    this.physicsBridge.setPositions(this.dragSyncBuffer);
+  }
+
+  private setupPointerInteractions() {
+    if (!this.graphContainer) return;
+
+    let isPointerDown = false;
+    let pointerDownPos = { x: 0, y: 0 };
+    let draggedNode: GraphNode | null = null;
+    const dragPlane = new THREE.Plane();
+    const planeIntersect = new THREE.Vector3();
+    const tempCamDir = new THREE.Vector3();
+    const pointerNdc = new THREE.Vector2();
+
+    const updatePointerNDC = (e: MouseEvent | PointerEvent) => {
+      const rect = this.graphContainer.getBoundingClientRect();
+      pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointerNdc.y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+      return pointerNdc;
+    };
+
+    this.registerDomEvent(this.graphContainer, "pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      isPointerDown = true;
+      pointerDownPos = { x: e.clientX, y: e.clientY };
+
+      if (!this.graph || !this.instancedRenderer || this.currentPositions.length === 0) return;
+      const camera = this.graph.camera();
+      if (!camera) return;
+
+      const ndc = updatePointerNDC(e);
+      this.raycaster.setFromCamera(ndc, camera);
+      const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
+
+      if (hitIdx !== null && hitIdx < this.currentNodes.length) {
+        draggedNode = this.currentNodes[hitIdx];
+        const controls = this.graph.controls();
+        if (controls) controls.enabled = false;
+
+        const nodePos = new THREE.Vector3(
+          this.currentPositions[hitIdx * 4],
+          this.currentPositions[hitIdx * 4 + 1],
+          this.currentPositions[hitIdx * 4 + 2],
+        );
+        camera.getWorldDirection(tempCamDir);
+        dragPlane.setFromNormalAndCoplanarPoint(tempCamDir.negate(), nodePos);
+      }
+    });
+
+    this.registerDomEvent(this.graphContainer, "pointermove", (e: PointerEvent) => {
+      if (!this.graph || !this.instancedRenderer || this.currentPositions.length === 0) return;
+      const camera = this.graph.camera();
+      if (!camera) return;
+
+      const ndc = updatePointerNDC(e);
+      this.raycaster.setFromCamera(ndc, camera);
+
+      if (draggedNode && isPointerDown) {
+        if (this.raycaster.ray.intersectPlane(dragPlane, planeIntersect)) {
+          draggedNode.x = planeIntersect.x;
+          draggedNode.y = planeIntersect.y;
+          draggedNode.z = planeIntersect.z;
+          const idx = this.nodeIdToIndex.get(draggedNode.id);
+          if (idx !== undefined) {
+            this.currentPositions[idx * 4] = planeIntersect.x;
+            this.currentPositions[idx * 4 + 1] = planeIntersect.y;
+            this.currentPositions[idx * 4 + 2] = planeIntersect.z;
+          }
+          this.instancedRenderer.updatePositions(this.currentPositions);
+          this.syncDragPositionsToWasm(draggedNode);
+        }
+      } else {
+        const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
+        const node = hitIdx !== null ? this.currentNodes[hitIdx] : null;
+        if (node !== this.hoveredNode) {
+          this.handleNodeHover(node);
+        }
+      }
+    });
+
+    const onPointerUp = () => {
+      if (draggedNode) {
+        this.syncDragPositionsToWasm(draggedNode);
+        draggedNode = null;
+        const controls = this.graph?.controls();
+        if (controls) controls.enabled = true;
+      }
+      isPointerDown = false;
+    };
+
+    this.registerDomEvent(this.graphContainer, "pointerup", onPointerUp);
+    this.registerDomEvent(this.graphContainer, "pointerleave", onPointerUp);
+
+    this.registerDomEvent(this.graphContainer, "click", (e: MouseEvent) => {
+      const distSq = (e.clientX - pointerDownPos.x) ** 2 + (e.clientY - pointerDownPos.y) ** 2;
+      if (distSq > 25) return;
+
+      if (!this.graph || !this.instancedRenderer || this.currentPositions.length === 0) return;
+      const camera = this.graph.camera();
+      if (!camera) return;
+
+      const ndc = updatePointerNDC(e);
+      this.raycaster.setFromCamera(ndc, camera);
+      const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
+
+      if (hitIdx !== null && hitIdx < this.currentNodes.length) {
+        this.handleNodeClick(this.currentNodes[hitIdx], e);
+      } else {
+        if (this.selectedNode !== null || this.highlightedNodes.size > 0) {
+          this.selectedNode = null;
+          this.highlightedNodes.clear();
+          this.highlightedLinks.clear();
+          this.updateColors();
+        }
+      }
+    });
+
+    this.registerDomEvent(this.graphContainer, "dblclick", (e: MouseEvent) => {
+      if (!this.graph || !this.instancedRenderer || this.currentPositions.length === 0) return;
+      const camera = this.graph.camera();
+      if (!camera) return;
+
+      const ndc = updatePointerNDC(e);
+      this.raycaster.setFromCamera(ndc, camera);
+      const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
+
+      if (hitIdx !== null && hitIdx < this.currentNodes.length) {
+        this.handleNodeDoubleClick(this.currentNodes[hitIdx]);
+      }
+    });
+  }
+
   initializeGraph() {
     this.app.workspace.onLayoutReady(async () => {
       if (!this.graphContainer) return;
 
       const Graph = (ForceGraph3D as any).default || ForceGraph3D;
       this.graph = Graph()(this.graphContainer)
-        .onNodeDrag((node: GraphNode) => {
-          const controls = this.graph.controls();
-          if (controls) {
-            controls.enabled = false;
-          }
-          if (this.settings.useWasmPhysics && this.graph) {
-            const nodes = this.graph.graphData().nodes as GraphNode[];
-            if (this.dragSyncBuffer.length !== nodes.length * 3) {
-              this.dragSyncBuffer = new Float32Array(nodes.length * 3);
-            }
-            for (let i = 0; i < nodes.length; i++) {
-              this.dragSyncBuffer[i * 3] = nodes[i].x || 0;
-              this.dragSyncBuffer[i * 3 + 1] = nodes[i].y || 0;
-              this.dragSyncBuffer[i * 3 + 2] = nodes[i].z || 0;
-            }
-            this.physicsBridge.setPositions(this.dragSyncBuffer);
-          }
-        })
-        .onNodeDragEnd((node: GraphNode) => {
-          const controls = this.graph.controls();
-          if (controls) {
-            controls.enabled = true;
-          }
-          if (this.settings.useWasmPhysics && this.graph) {
-            const nodes = this.graph.graphData().nodes as GraphNode[];
-            if (this.dragSyncBuffer.length !== nodes.length * 3) {
-              this.dragSyncBuffer = new Float32Array(nodes.length * 3);
-            }
-            for (let i = 0; i < nodes.length; i++) {
-              this.dragSyncBuffer[i * 3] = nodes[i].x || 0;
-              this.dragSyncBuffer[i * 3 + 1] = nodes[i].y || 0;
-              this.dragSyncBuffer[i * 3 + 2] = nodes[i].z || 0;
-            }
-            this.physicsBridge.setPositions(this.dragSyncBuffer);
-          }
-        })
-        .onNodeClick((node: GraphNode, event: MouseEvent) => this.handleNodeClick(node, event))
-        .onNodeHover((node: GraphNode | null) => this.handleNodeHover(node))
+        .nodeVisibility(false)
+        .linkVisibility(false)
         .linkCurvature((link: ProcessedGraphLink) => this.getLinkCurvature(link))
         .onEngineTick(() => {
-          const now = performance.now();
-          if (now - this.lastLabelUpdateTime > this.LABEL_UPDATE_INTERVAL) {
-            this.lastLabelUpdateTime = now;
-            this.updateLabels();
-          }
           this.handleKeyboardMovement();
         });
+
+      const scene = this.graph.scene();
+      this.instancedRenderer = new InstancedGraphRenderer(scene);
+      this.labelRenderer = new InstancedLabelRenderer(scene);
+
+      this.setupPointerInteractions();
 
       this.graph.graphData({ nodes: [], links: [] });
 
@@ -856,6 +975,13 @@ export class Graph3DView extends ItemView {
           this.nodeMap.set(node.id, node);
         });
 
+        this.currentNodes = newData.nodes;
+        this.currentLinks = newData.links;
+        this.nodeIdToIndex.clear();
+        newData.nodes.forEach((n: GraphNode, idx: number) => this.nodeIdToIndex.set(n.id, idx));
+        this.linkToIndex.clear();
+        newData.links.forEach((l: GraphLink, idx: number) => this.linkToIndex.set(l, idx));
+
         this.graph.graphData(newData);
         this.occludersCacheDirty = true;
 
@@ -881,11 +1007,6 @@ export class Graph3DView extends ItemView {
           this.linkAdjacencyIndex.get(targetId)!.push(link);
         });
 
-        this.updateForces();
-        this.updateDisplay();
-        this.updateColors();
-        this.updateControls();
-
         if (this.counterEl) {
           this.counterEl.setText(`${newData.nodes.length} nodes · ${newData.links.length} links`);
           this.counterEl.addClass("is-visible");
@@ -894,21 +1015,45 @@ export class Graph3DView extends ItemView {
         if (this.settings.useWasmPhysics && hasNodes) {
           this.graph.d3AlphaDecay(1);
 
-          const nodeIndexMap = new Map<string, number>();
-          newData.nodes.forEach((n: GraphNode, idx: number) => nodeIndexMap.set(n.id, idx));
-
           const edgesList: number[] = [];
+          const edgeDataList: { source: number; target: number }[] = [];
           newData.links.forEach((l: GraphLink) => {
             const srcId =
               typeof l.source === "object" ? (l.source as GraphNode).id : (l.source as string);
             const tgtId =
               typeof l.target === "object" ? (l.target as GraphNode).id : (l.target as string);
-            const srcIdx = nodeIndexMap.get(srcId);
-            const tgtIdx = nodeIndexMap.get(tgtId);
+            const srcIdx = this.nodeIdToIndex.get(srcId);
+            const tgtIdx = this.nodeIdToIndex.get(tgtId);
             if (srcIdx !== undefined && tgtIdx !== undefined) {
               edgesList.push(srcIdx, tgtIdx);
+              edgeDataList.push({ source: srcIdx, target: tgtIdx });
             }
           });
+
+          const nodeDataList = newData.nodes.map((n: GraphNode) => ({
+            id: n.id,
+            name: n.name,
+            shape: this.getNodeShape(n),
+            val: this.getNodeSize(n),
+            color: this.getNodeColor(n),
+          }));
+
+          const linkColor = this.settings.useThemeColors
+            ? this.getCssColor("--graph-line", this.settings.colorLink)
+            : this.settings.colorLink;
+
+          this.instancedRenderer?.initGraph(
+            nodeDataList,
+            edgeDataList,
+            this.settings.nodeSize,
+            linkColor,
+            0.6,
+          );
+          this.labelRenderer?.initLabels(newData.nodes, this.settings, 4);
+
+          this.updateForces();
+          this.updateDisplay();
+          this.updateControls();
 
           this.physicsBridge
             .init(
@@ -924,13 +1069,15 @@ export class Graph3DView extends ItemView {
             )
             .then(() => {
               this.physicsBridge.onTick((positions) => {
-                const nodes = newData.nodes;
-                const count = nodes.length;
-                for (let i = 0, base = 0; i < count; i++, base += 4) {
-                  nodes[i].x = positions[base];
-                  nodes[i].y = positions[base + 1];
-                  nodes[i].z = positions[base + 2];
-                }
+                this.currentPositions = positions;
+                this.instancedRenderer?.updatePositions(positions);
+                this.labelRenderer?.updateVisibilityAndOcclusion(
+                  this.graph.camera(),
+                  positions,
+                  this.settings,
+                  this.hoveredNode ? this.hoveredNode.id : null,
+                  this.highlightedNodes,
+                );
                 this.handleKeyboardMovement();
               });
               this.physicsBridge.start();
@@ -953,6 +1100,11 @@ export class Graph3DView extends ItemView {
         this.graph.resumeAnimation();
       } else {
         this.graph.graphData({ nodes: [], links: [] });
+        this.instancedRenderer?.clear();
+        this.labelRenderer?.clear();
+        this.currentPositions = new Float32Array(0);
+        this.currentNodes = [];
+        this.currentLinks = [];
         this.colorCache.clear();
         const bgColor = this.settings.useThemeColors
           ? this.getCssColor("--background-primary", "#000000")
@@ -983,25 +1135,37 @@ export class Graph3DView extends ItemView {
       : this.settings.backgroundColor;
     this.graph.backgroundColor(bgColor);
 
-    this.graph.graphData().nodes.forEach((node: GraphNode) => {
-      const mesh = this.nodeMeshes.get(node);
-      if (mesh) {
-        const color = this.getNodeColor(node);
-        if (color) {
-          mesh.material = this.getSharedMaterial(color);
-        }
-      }
-    });
+    if (this.instancedRenderer && this.currentNodes.length > 0) {
+      const colorMap = new Map<number, string>();
+      this.currentNodes.forEach((node, idx) => {
+        colorMap.set(idx, this.getNodeColor(node));
+      });
+      this.instancedRenderer.updateNodeColors(colorMap);
 
-    const linkHighlightColor = this.settings.useThemeColors
-      ? this.getCssColor("--graph-node-focused", this.settings.colorHighlight)
-      : this.settings.colorHighlight;
-    const linkColor = this.settings.useThemeColors
-      ? this.getCssColor("--graph-line", this.settings.colorLink)
-      : this.settings.colorLink;
-    this.graph.linkColor((link: GraphLink) =>
-      this.highlightedLinks.has(link) ? linkHighlightColor : linkColor,
-    );
+      const linkHighlightColor = this.settings.useThemeColors
+        ? this.getCssColor("--graph-node-focused", this.settings.colorHighlight)
+        : this.settings.colorHighlight;
+      const linkColor = this.settings.useThemeColors
+        ? this.getCssColor("--graph-line", this.settings.colorLink)
+        : this.settings.colorLink;
+
+      const highlightedEdgeIndices = new Set<number>();
+      this.highlightedLinks.forEach((linkObj) => {
+        const idx = this.linkToIndex.get(linkObj as GraphLink);
+        if (idx !== undefined) highlightedEdgeIndices.add(idx);
+      });
+      this.instancedRenderer.updateEdgeColors(highlightedEdgeIndices, linkHighlightColor, linkColor);
+    }
+
+    if (this.labelRenderer && this.currentPositions.length > 0) {
+      this.labelRenderer.updateVisibilityAndOcclusion(
+        this.graph.camera(),
+        this.currentPositions,
+        this.settings,
+        this.hoveredNode ? this.hoveredNode.id : null,
+        this.highlightedNodes,
+      );
+    }
   }
 
   private getCssColor(variable: string, fallback: string): string {
@@ -1010,29 +1174,16 @@ export class Graph3DView extends ItemView {
     }
 
     try {
-      const tempEl = document.createElement("div");
-      tempEl.style.display = "none";
-      tempEl.style.color = `var(${variable})`;
-      document.body.appendChild(tempEl);
-
-      const computedColor = getComputedStyle(tempEl).color;
-      document.body.removeChild(tempEl);
-
-      const canvas = document.createElement("canvas");
-      canvas.width = 1;
-      canvas.height = 1;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        this.colorCache.set(variable, fallback);
-        return fallback;
+      const varName = variable.startsWith("--")
+        ? variable
+        : `--${variable.replace(/^var\(/, "").replace(/\)$/, "")}`;
+      const computed = getComputedStyle(document.body).getPropertyValue(varName).trim();
+      if (computed) {
+        this.colorCache.set(variable, computed);
+        return computed;
       }
-      ctx.fillStyle = computedColor;
-      ctx.fillRect(0, 0, 1, 1);
-      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
-
-      const finalColor = `rgb(${r}, ${g}, ${b})`;
-      this.colorCache.set(variable, finalColor);
-      return finalColor;
+      this.colorCache.set(variable, fallback);
+      return fallback;
     } catch (e) {
       console.error(`3D Graph: Could not parse CSS color variable ${variable}`, e);
       this.colorCache.set(variable, fallback);
@@ -1095,6 +1246,28 @@ export class Graph3DView extends ItemView {
       })
       .filter((g) => g.query !== "");
     this.groupsDirty = false;
+  }
+
+  private getNodeShape(node: GraphNode): NodeShape {
+    switch (node.type) {
+      case NodeType.Tag:
+        return this.settings.tagShape;
+      case NodeType.Attachment:
+        return this.settings.attachmentShape;
+      default:
+        return this.settings.nodeShape;
+    }
+  }
+
+  private getNodeSize(node: GraphNode): number {
+    switch (node.type) {
+      case NodeType.Tag:
+        return this.settings.tagNodeSize;
+      case NodeType.Attachment:
+        return this.settings.attachmentNodeSize;
+      default:
+        return this.settings.nodeSize;
+    }
   }
 
   private getNodeColor(node: GraphNode): string {
@@ -1162,57 +1335,7 @@ export class Graph3DView extends ItemView {
   public updateDisplay() {
     if (!this.isGraphInitialized) return;
     this.updatePreprocessedGroups();
-    this.graph.nodeThreeObject((node: GraphNode) => this.createNodeObject(node));
-
-    this.graph
-      .linkWidth((link: GraphLink) =>
-        this.highlightedLinks.has(link)
-          ? this.settings.linkThickness * 2
-          : this.settings.linkThickness,
-      )
-      .linkDirectionalParticles((link: GraphLink) =>
-        this.highlightedLinks.has(link) && !this.settings.performanceMode ? 4 : 0,
-      )
-      .linkDirectionalParticleWidth(2);
-  }
-
-  private hexToRgba(hex: string, alpha: number): string {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-
-  private createNodeObject(node: GraphNode): THREE.Object3D {
-    const group = new THREE.Group();
-
-    let shape: NodeShape;
-    let size: number;
-    switch (node.type) {
-      case NodeType.Tag:
-        shape = this.settings.tagShape;
-        size = this.settings.tagNodeSize;
-        break;
-      case NodeType.Attachment:
-        shape = this.settings.attachmentShape;
-        size = this.settings.attachmentNodeSize;
-        break;
-      default:
-        shape = this.settings.nodeShape;
-        size = this.settings.nodeSize;
-    }
-
-    const geometry = this.getSharedGeometry(shape);
-    const s = size * 1.5;
-
-    const color = this.getNodeColor(node);
-    const mesh = new THREE.Mesh(geometry, this.getSharedMaterial(color));
-    mesh.scale.set(s, s, s);
-
-    this.nodeMeshes.set(node, mesh);
-    group.add(mesh);
-
-    return group;
+    this.updateColors();
   }
 
   public updateForces() {
@@ -1264,143 +1387,29 @@ export class Graph3DView extends ItemView {
   }
 
   private updateLabels() {
-    if (!this.isGraphInitialized || !this.settings.showNodeLabels || this.settings.performanceMode)
+    if (
+      !this.isGraphInitialized ||
+      !this.labelRenderer ||
+      this.currentPositions.length === 0 ||
+      !this.settings.showNodeLabels ||
+      this.settings.performanceMode
+    ) {
+      if (this.labelRenderer?.instancedMesh) {
+        this.labelRenderer.instancedMesh.visible = false;
+      }
       return;
-
-    const camera = this.graph.camera();
-    const nodes = this.graph.graphData().nodes;
-
-    if (!nodes || !camera) return;
-
-    this.projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-    this.frustum.setFromProjectionMatrix(this.projScreenMatrix);
-
-    if (this.settings.labelOcclusion && this.occludersCacheDirty) {
-      this.cachedOccluders = nodes
-        .map((n: GraphNode) => this.nodeMeshes.get(n))
-        .filter(Boolean) as THREE.Mesh[];
-      this.occludersCacheDirty = false;
     }
 
-    const raycastCullDistanceSq = this.RAYCAST_CULL_DISTANCE * this.RAYCAST_CULL_DISTANCE;
-    const relevantOccluders = this.settings.labelOcclusion
-      ? this.cachedOccluders.filter(
-          (mesh) => camera.position.distanceToSquared(mesh.position) < raycastCullDistanceSq,
-        )
-      : [];
+    const camera = this.graph?.camera();
+    if (!camera) return;
 
-    nodes.forEach((node: GraphNode) => {
-      if (this.settings.showLabelsOnHoverOnly) {
-        const isHovered = this.hoveredNode && this.hoveredNode.id === node.id;
-        const isHighlighted = this.highlightedNodes.has(node.id);
-        if (!isHovered && !isHighlighted) {
-          this.removeNodeSprite(node);
-          return;
-        }
-      }
-
-      if (node.__threeObj) {
-        node.__threeObj.getWorldPosition(this.reusableNodePosition);
-      } else {
-        this.removeNodeSprite(node);
-        return;
-      }
-
-      if (!this.frustum.containsPoint(this.reusableNodePosition)) {
-        this.removeNodeSprite(node);
-        return;
-      }
-
-      const distanceSq = camera.position.distanceToSquared(this.reusableNodePosition);
-
-      const visibleDistance = this.settings.labelDistance;
-      const fadeStartDistance = visibleDistance * this.settings.labelFadeThreshold;
-      const visibleDistSq = visibleDistance * visibleDistance;
-      const fadeStartDistSq = fadeStartDistance * fadeStartDistance;
-
-      let opacity = 0;
-
-      if (distanceSq <= fadeStartDistSq) {
-        opacity = 1;
-      } else if (distanceSq <= visibleDistSq) {
-        const distance = Math.sqrt(distanceSq);
-        opacity = 1 - (distance - fadeStartDistance) / (visibleDistance - fadeStartDistance);
-      }
-
-      if (opacity > 0 && this.settings.labelOcclusion && relevantOccluders.length > 1) {
-        const direction = this.reusableDirection
-          .subVectors(this.reusableNodePosition, camera.position)
-          .normalize();
-        this.raycaster.set(camera.position, direction);
-        const intersects = this.raycaster.intersectObjects(relevantOccluders);
-        const mesh = this.nodeMeshes.get(node);
-
-        if (intersects.length > 0 && intersects[0].object !== mesh) {
-          if (intersects[0].distance < Math.sqrt(distanceSq)) {
-            opacity = 0;
-          }
-        }
-      }
-
-      if (opacity > 0.01) {
-        let sprite = this.nodeSprites.get(node);
-        if (!sprite) {
-          sprite = this.createNodeSprite(node);
-        }
-        if (sprite && sprite.material) {
-          (sprite.material as THREE.SpriteMaterial).opacity = opacity;
-          sprite.visible = true;
-        }
-      } else {
-        this.removeNodeSprite(node);
-      }
-    });
-  }
-
-  private createNodeSprite(node: GraphNode): SpriteText {
-    const sprite = new SpriteText(node.name);
-    const isDarkMode = document.body.classList.contains("theme-dark");
-    sprite.color = isDarkMode
-      ? this.settings.labelTextColorDark
-      : this.settings.labelTextColorLight;
-    sprite.backgroundColor = this.hexToRgba(
-      this.settings.labelBackgroundColor,
-      this.settings.labelBackgroundOpacity,
+    this.labelRenderer.updateVisibilityAndOcclusion(
+      camera,
+      this.currentPositions,
+      this.settings,
+      this.hoveredNode ? this.hoveredNode.id : null,
+      this.highlightedNodes,
     );
-    sprite.textHeight = this.settings.labelTextSize;
-
-    let size: number;
-    switch (node.type) {
-      case NodeType.Tag:
-        size = this.settings.tagNodeSize;
-        break;
-      case NodeType.Attachment:
-        size = this.settings.attachmentNodeSize;
-        break;
-      default:
-        size = this.settings.nodeSize;
-    }
-    const s = size * 1.5;
-    sprite.position.y = s / 2 + 2;
-
-    this.nodeSprites.set(node, sprite);
-    if (node.__threeObj) {
-      node.__threeObj.add(sprite);
-    }
-    return sprite;
-  }
-
-  private removeNodeSprite(node: GraphNode) {
-    const sprite = this.nodeSprites.get(node);
-    if (sprite) {
-      sprite.parent?.remove(sprite);
-      sprite.geometry?.dispose();
-      if (sprite.material) {
-        sprite.material.map?.dispose();
-        sprite.material.dispose();
-      }
-      this.nodeSprites.delete(node);
-    }
   }
 
   private handleNodeClick(node: GraphNode, event?: MouseEvent) {
@@ -1453,9 +1462,18 @@ export class Graph3DView extends ItemView {
         this.highlightedLinks.add(link);
       });
 
-      if (node.__threeObj && this.settings.zoomOnClick) {
+      if (this.settings.zoomOnClick) {
         const zoomDistance = 40;
-        node.__threeObj.getWorldPosition(this.reusableNodePosition);
+        const idx = this.nodeIdToIndex.get(node.id);
+        if (idx !== undefined && this.currentPositions.length > idx * 4) {
+          this.reusableNodePosition.set(
+            this.currentPositions[idx * 4],
+            this.currentPositions[idx * 4 + 1],
+            this.currentPositions[idx * 4 + 2],
+          );
+        } else {
+          this.reusableNodePosition.set(node.x || 0, node.y || 0, node.z || 0);
+        }
         const cameraPosition = this.graph.camera().position;
         this.reusableDirection.subVectors(cameraPosition, this.reusableNodePosition).normalize();
         this.reusableTargetPosition.addVectors(
@@ -1466,8 +1484,6 @@ export class Graph3DView extends ItemView {
       }
     }
     this.updateNodeColorsDiff();
-    this.graph.linkWidth(this.graph.linkWidth());
-    this.graph.linkDirectionalParticles(this.graph.linkDirectionalParticles());
     this.updateLabels();
   }
 
@@ -1496,8 +1512,6 @@ export class Graph3DView extends ItemView {
       });
     }
     this.updateNodeColorsDiff();
-    this.graph.linkWidth(this.graph.linkWidth());
-    this.graph.linkDirectionalParticles(this.graph.linkDirectionalParticles());
     this.updateLabels();
   }
 
@@ -1506,18 +1520,41 @@ export class Graph3DView extends ItemView {
     this.lastHighlightedNodes.forEach((id) => nodesToUpdate.add(id));
     this.highlightedNodes.forEach((id) => nodesToUpdate.add(id));
 
-    nodesToUpdate.forEach((nodeId) => {
-      const node = this.nodeMap.get(nodeId);
-      if (node) {
-        const mesh = this.nodeMeshes.get(node);
-        if (mesh) {
-          const color = this.getNodeColor(node);
-          if (color) {
-            mesh.material = this.getSharedMaterial(color);
-          }
+    if (this.instancedRenderer) {
+      const colorMap = new Map<number, string>();
+      nodesToUpdate.forEach((nodeId) => {
+        const idx = this.nodeIdToIndex.get(nodeId);
+        const node = this.nodeMap.get(nodeId);
+        if (idx !== undefined && node) {
+          colorMap.set(idx, this.getNodeColor(node));
         }
-      }
-    });
+      });
+      this.instancedRenderer.updateNodeColors(colorMap);
+
+      const linkHighlightColor = this.settings.useThemeColors
+        ? this.getCssColor("--graph-node-focused", this.settings.colorHighlight)
+        : this.settings.colorHighlight;
+      const linkColor = this.settings.useThemeColors
+        ? this.getCssColor("--graph-line", this.settings.colorLink)
+        : this.settings.colorLink;
+
+      const highlightedEdgeIndices = new Set<number>();
+      this.highlightedLinks.forEach((linkObj) => {
+        const idx = this.linkToIndex.get(linkObj as GraphLink);
+        if (idx !== undefined) highlightedEdgeIndices.add(idx);
+      });
+      this.instancedRenderer.updateEdgeColors(highlightedEdgeIndices, linkHighlightColor, linkColor);
+    }
+
+    if (this.labelRenderer && this.currentPositions.length > 0) {
+      this.labelRenderer.updateVisibilityAndOcclusion(
+        this.graph.camera(),
+        this.currentPositions,
+        this.settings,
+        this.hoveredNode ? this.hoveredNode.id : null,
+        this.highlightedNodes,
+      );
+    }
 
     this.lastHighlightedNodes.clear();
     this.highlightedNodes.forEach((id) => this.lastHighlightedNodes.add(id));
@@ -1785,8 +1822,6 @@ export class Graph3DView extends ItemView {
       this.nodeMeshes.delete(node);
     }
 
-    this.removeNodeSprite(node);
-
     if (options.cleanGroup && node.__threeObj) {
       node.__threeObj.parent?.remove(node.__threeObj);
     }
@@ -1809,6 +1844,14 @@ export class Graph3DView extends ItemView {
         this.graph._destructor();
       }
       this.graph = null;
+    }
+    if (this.instancedRenderer) {
+      this.instancedRenderer.clear();
+      this.instancedRenderer = null;
+    }
+    if (this.labelRenderer) {
+      this.labelRenderer.clear();
+      this.labelRenderer = null;
     }
     if (this.messageEl) {
       this.messageEl.remove();
