@@ -961,16 +961,20 @@ export class Graph3DView extends ItemView {
         this.messageEl.removeClass("is-visible");
 
         this.reciprocalLinks.clear();
-        const linkKeys = new Set<string>();
-        newData.links.forEach((link) => {
-          linkKeys.add(`${link.source}->${link.target}`);
-        });
-        newData.links.forEach((link) => {
-          const reciprocalKey = `${link.target}->${link.source}`;
-          if (linkKeys.has(reciprocalKey)) {
-            this.reciprocalLinks.add(`${link.source}->${link.target}`);
+        const seenLinks = new Set<string>();
+        const linksCount = newData.links.length;
+        for (let i = 0; i < linksCount; i++) {
+          const link = newData.links[i];
+          const src = typeof link.source === "object" ? (link.source as GraphNode).id : (link.source as string);
+          const tgt = typeof link.target === "object" ? (link.target as GraphNode).id : (link.target as string);
+          const directKey = `${src}->${tgt}`;
+          const reverseKey = `${tgt}->${src}`;
+          if (seenLinks.has(reverseKey)) {
+            this.reciprocalLinks.add(directKey);
+            this.reciprocalLinks.add(reverseKey);
           }
-        });
+          seenLinks.add(directKey);
+        }
 
         this.nodeMap.clear();
         newData.nodes.forEach((node) => {
@@ -1073,13 +1077,15 @@ export class Graph3DView extends ItemView {
               this.physicsBridge.onTick((positions) => {
                 this.currentPositions = positions;
                 this.instancedRenderer?.updatePositions(positions);
-                this.labelRenderer?.updateVisibilityAndOcclusion(
-                  this.graph.camera(),
-                  positions,
-                  this.settings,
-                  this.hoveredNode ? this.hoveredNode.id : null,
-                  this.highlightedNodes,
-                );
+                if (this.settings.showNodeLabels && !this.settings.performanceMode) {
+                  this.labelRenderer?.updateVisibilityAndOcclusion(
+                    this.graph.camera(),
+                    positions,
+                    this.settings,
+                    this.hoveredNode ? this.hoveredNode.id : null,
+                    this.highlightedNodes,
+                  );
+                }
                 this.handleKeyboardMovement();
               });
               this.physicsBridge.start();
@@ -1398,6 +1404,7 @@ export class Graph3DView extends ItemView {
       if (!this.controlsListenerAdded) {
         let labelUpdatePending = false;
         controls.addEventListener("change", () => {
+          if (!this.settings.showNodeLabels || this.settings.performanceMode) return;
           if (!labelUpdatePending) {
             labelUpdatePending = true;
             requestAnimationFrame(() => {
@@ -1711,11 +1718,34 @@ export class Graph3DView extends ItemView {
 
     const allLinks: { source: string; target: string }[] = [];
     const existingLinks = new Set<string>();
+    const adjacency = new Map<string, string[]>();
+
+    const addLink = (source: string, target: string) => {
+      const linkKey = `${source}->${target}`;
+      if (!existingLinks.has(linkKey)) {
+        existingLinks.add(linkKey);
+        allLinks.push({ source, target });
+
+        let srcAdj = adjacency.get(source);
+        if (!srcAdj) {
+          srcAdj = [];
+          adjacency.set(source, srcAdj);
+        }
+        srcAdj.push(target);
+
+        let tgtAdj = adjacency.get(target);
+        if (!tgtAdj) {
+          tgtAdj = [];
+          adjacency.set(target, tgtAdj);
+        }
+        tgtAdj.push(source);
+      }
+    };
 
     for (const sourcePath in resolvedLinks) {
-      for (const targetPath in resolvedLinks[sourcePath]) {
-        allLinks.push({ source: sourcePath, target: targetPath });
-        existingLinks.add(`${sourcePath}->${targetPath}`);
+      const targets = resolvedLinks[sourcePath];
+      for (const targetPath in targets) {
+        addLink(sourcePath, targetPath);
       }
     }
 
@@ -1725,112 +1755,127 @@ export class Graph3DView extends ItemView {
         for (const linkCache of cache.frontmatterLinks) {
           const destFile = this.app.metadataCache.getFirstLinkpathDest(linkCache.link, file.path);
           if (destFile) {
-            const linkKey = `${file.path}->${destFile.path}`;
-            if (!existingLinks.has(linkKey)) {
-              allLinks.push({
-                source: file.path,
-                target: destFile.path,
-              });
-              existingLinks.add(linkKey);
-            }
+            addLink(file.path, destFile.path);
           }
         }
       }
     }
 
     if (showTags) {
-      const allTags = new Map<string, GraphNode>();
       allNodesMap.forEach((node) => {
         if (node.type === NodeType.File && node.tags) {
-          node.tags.forEach((tagName) => {
+          for (let i = 0; i < node.tags.length; i++) {
+            const tagName = node.tags[i];
             const tagId = `tag:${tagName}`;
-            if (!allTags.has(tagName)) {
-              allTags.set(tagName, {
+            if (!allNodesMap.has(tagId)) {
+              allNodesMap.set(tagId, {
                 id: tagId,
                 name: `#${tagName}`,
                 type: NodeType.Tag,
               });
             }
-            const linkKey = `${node.id}->${tagId}`;
-            if (!existingLinks.has(linkKey)) {
-              allLinks.push({ source: node.id, target: tagId });
-              existingLinks.add(linkKey);
-            }
-          });
+            addLink(node.id, tagId);
+          }
         }
       });
-      allTags.forEach((tagNode, tagName) => allNodesMap.set(tagNode.id, tagNode));
     }
 
-    let matchedNodes = Array.from(allNodesMap.values());
-
+    const allNodes = Array.from(allNodesMap.values());
     const activeFilters = filters.filter((f) => f.enabled && f.value.trim() !== "");
+    const hasActiveFilters = activeFilters.length > 0;
+    const lowerCaseSearch = searchQuery ? searchQuery.toLowerCase() : "";
 
-    if (activeFilters.length > 0) {
-      const nodesToKeep = new Set<GraphNode>();
-      activeFilters.forEach((filter) => {
-        matchedNodes.forEach((node) => {
-          if (this.matchesFilter(node, filter)) {
-            nodesToKeep.add(node);
+    const isNodeMatch = (node: GraphNode): boolean => {
+      if (hasActiveFilters) {
+        let filterPassed = false;
+        for (let i = 0; i < activeFilters.length; i++) {
+          if (this.matchesFilter(node, activeFilters[i])) {
+            filterPassed = true;
+            break;
           }
-        });
-      });
-      matchedNodes = Array.from(nodesToKeep);
-    }
+        }
+        if (!filterPassed) return false;
+      }
 
-    if (searchQuery) {
-      const lowerCaseFilter = searchQuery.toLowerCase();
-      matchedNodes = matchedNodes.filter((node) => {
+      if (lowerCaseSearch) {
         let nodeContentLower = "";
         if (node.type === NodeType.File) {
           nodeContentLower = this.fileContentCache.get(node.id)?.lowerCaseContent || "";
         }
-        return (
-          node.name.toLowerCase().includes(lowerCaseFilter) ||
-          (node.type !== NodeType.Tag && node.id.toLowerCase().includes(lowerCaseFilter)) ||
-          nodeContentLower.includes(lowerCaseFilter)
-        );
-      });
-    }
+        const matches =
+          node.name.toLowerCase().includes(lowerCaseSearch) ||
+          (node.type !== NodeType.Tag && node.id.toLowerCase().includes(lowerCaseSearch)) ||
+          nodeContentLower.includes(lowerCaseSearch);
+        if (!matches) return false;
+      }
 
-    let finalNodes: GraphNode[];
-    if (showNeighboringNodes && (activeFilters.length > 0 || searchQuery)) {
-      const matchedIds = new Set(matchedNodes.map((n) => n.id));
-      const neighborIds = new Set<string>();
+      return true;
+    };
 
-      allLinks.forEach((link) => {
-        if (matchedIds.has(link.source)) {
-          neighborIds.add(link.target);
-        } else if (matchedIds.has(link.target)) {
-          neighborIds.add(link.source);
-        }
-      });
-
-      finalNodes = Array.from(allNodesMap.values()).filter(
-        (node) => matchedIds.has(node.id) || neighborIds.has(node.id),
-      );
-    } else {
-      finalNodes = matchedNodes;
-    }
-
-    let nodesToShow = finalNodes.filter((node) => {
+    const isTypeVisible = (node: GraphNode): boolean => {
       if (node.type === NodeType.Tag) return showTags;
       if (node.type === NodeType.Attachment) return showAttachments;
       return true;
-    });
+    };
 
-    const nodesToShowIds = new Set(nodesToShow.map((n) => n.id));
-    const linksToShow = allLinks.filter(
-      (link) => nodesToShowIds.has(link.source) && nodesToShowIds.has(link.target),
-    );
+    const hasFilterOrSearch = hasActiveFilters || Boolean(lowerCaseSearch);
+    const visibleNodeIds = new Set<string>();
 
-    if (hideOrphans) {
-      const linkedNodeIds = new Set<string>();
-      linksToShow.forEach((link) => {
-        linkedNodeIds.add(link.source);
-        linkedNodeIds.add(link.target);
-      });
-      nodesToShow = nodesToShow.filter((node) => linkedNodeIds.has(node.id));
+    if (hasFilterOrSearch) {
+      const matchedNodeIds: string[] = [];
+      for (let i = 0; i < allNodes.length; i++) {
+        const node = allNodes[i];
+        if (isNodeMatch(node)) {
+          matchedNodeIds.push(node.id);
+          if (isTypeVisible(node)) {
+            visibleNodeIds.add(node.id);
+          }
+        }
+      }
+
+      if (showNeighboringNodes) {
+        for (let i = 0; i < matchedNodeIds.length; i++) {
+          const neighbors = adjacency.get(matchedNodeIds[i]);
+          if (neighbors) {
+            for (let j = 0; j < neighbors.length; j++) {
+              const neighborId = neighbors[j];
+              const neighborNode = allNodesMap.get(neighborId);
+              if (neighborNode && isTypeVisible(neighborNode)) {
+                visibleNodeIds.add(neighborId);
+              }
+            }
+          }
+        }
+      }
+    } else {
+      for (let i = 0; i < allNodes.length; i++) {
+        const node = allNodes[i];
+        if (isTypeVisible(node)) {
+          visibleNodeIds.add(node.id);
+        }
+      }
+    }
+
+    const linksToShow: { source: string; target: string }[] = [];
+    const connectedNodeIds = hideOrphans ? new Set<string>() : null;
+
+    for (let i = 0; i < allLinks.length; i++) {
+      const link = allLinks[i];
+      if (visibleNodeIds.has(link.source) && visibleNodeIds.has(link.target)) {
+        linksToShow.push(link);
+        if (connectedNodeIds) {
+          connectedNodeIds.add(link.source);
+          connectedNodeIds.add(link.target);
+        }
+      }
+    }
+
+    const nodesToShow: GraphNode[] = [];
+    for (const nodeId of visibleNodeIds) {
+      if (!connectedNodeIds || connectedNodeIds.has(nodeId)) {
+        const node = allNodesMap.get(nodeId);
+        if (node) nodesToShow.push(node);
+      }
     }
 
     return { nodes: nodesToShow, links: linksToShow };

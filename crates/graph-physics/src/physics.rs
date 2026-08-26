@@ -281,9 +281,16 @@ impl PhysicsEngine {
     }
 
     pub fn set_positions_flat(&mut self, flat_in: &[f32]) {
-        let count = self.positions.len().min(flat_in.len() / 3);
-        for i in 0..count {
-            self.positions[i] = Vec3A::new(flat_in[i * 3], flat_in[i * 3 + 1], flat_in[i * 3 + 2]);
+        let n = self.positions.len();
+        if flat_in.len() >= n * 4 {
+            for i in 0..n {
+                self.positions[i] = Vec3A::new(flat_in[i * 4], flat_in[i * 4 + 1], flat_in[i * 4 + 2]);
+            }
+        } else {
+            let count = n.min(flat_in.len() / 3);
+            for i in 0..count {
+                self.positions[i] = Vec3A::new(flat_in[i * 3], flat_in[i * 3 + 1], flat_in[i * 3 + 2]);
+            }
         }
         self.kinetic_energy = 1.0;
     }

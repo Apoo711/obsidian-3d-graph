@@ -8,7 +8,11 @@ let _cachedWorkerBlobUrl: string | null = null;
 export function getWasmArrayBuffer(): ArrayBuffer {
   if (_cachedWasmBuffer === null) {
     const binaryString = atob(wasmBase64);
-    const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
     _cachedWasmBuffer = bytes.buffer;
   }
   return _cachedWasmBuffer.slice(0);
