@@ -430,17 +430,42 @@ export class InstancedGraphRenderer {
 
 const HEX_COLOR_CACHE = new Map<string, [number, number, number]>();
 
-export function hexToRgb01(hex: string): [number, number, number] {
-  const cached = HEX_COLOR_CACHE.get(hex);
+export function hexToRgb01(color: string): [number, number, number] {
+  const cached = HEX_COLOR_CACHE.get(color);
   if (cached) return cached;
 
-  const cleanHex = hex.replace("#", "");
-  const n = parseInt(cleanHex, 16) || 0;
-  const res: [number, number, number] = [
-    ((n >> 16) & 0xff) / 255,
-    ((n >> 8) & 0xff) / 255,
-    (n & 0xff) / 255,
-  ];
-  HEX_COLOR_CACHE.set(hex, res);
+  let r = 0.5;
+  let g = 0.5;
+  let b = 0.5;
+
+  if (color.startsWith("#")) {
+    const cleanHex = color.substring(1);
+    if (cleanHex.length === 3) {
+      r = (parseInt(cleanHex[0] + cleanHex[0], 16) || 0) / 255;
+      g = (parseInt(cleanHex[1] + cleanHex[1], 16) || 0) / 255;
+      b = (parseInt(cleanHex[2] + cleanHex[2], 16) || 0) / 255;
+    } else {
+      const n = parseInt(cleanHex, 16) || 0;
+      r = ((n >> 16) & 0xff) / 255;
+      g = ((n >> 8) & 0xff) / 255;
+      b = (n & 0xff) / 255;
+    }
+  } else if (color.startsWith("rgb")) {
+    const match = color.match(/\d+(\.\d+)?/g);
+    if (match && match.length >= 3) {
+      r = Math.min(255, Math.max(0, parseFloat(match[0]))) / 255;
+      g = Math.min(255, Math.max(0, parseFloat(match[1]))) / 255;
+      b = Math.min(255, Math.max(0, parseFloat(match[2]))) / 255;
+    }
+  } else {
+    const cleanHex = color.replace("#", "");
+    const n = parseInt(cleanHex, 16) || 0;
+    r = ((n >> 16) & 0xff) / 255;
+    g = ((n >> 8) & 0xff) / 255;
+    b = (n & 0xff) / 255;
+  }
+
+  const res: [number, number, number] = [r, g, b];
+  HEX_COLOR_CACHE.set(color, res);
   return res;
 }

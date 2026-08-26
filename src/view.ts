@@ -70,6 +70,8 @@ export class Graph3DView extends ItemView {
   private hoveredNode: GraphNode | null = null;
 
   private colorCache = new Map<string, string>();
+  private colorResolverEl: HTMLDivElement | null = null;
+  private colorCanvasCtx: CanvasRenderingContext2D | null = null;
 
   private graphContainer: HTMLDivElement;
   private messageEl: HTMLDivElement;
@@ -1177,18 +1179,41 @@ export class Graph3DView extends ItemView {
       const varName = variable.startsWith("--")
         ? variable
         : `--${variable.replace(/^var\(/, "").replace(/\)$/, "")}`;
-      const computed = getComputedStyle(document.body).getPropertyValue(varName).trim();
-      if (computed) {
+
+      if (!this.colorResolverEl) {
+        this.colorResolverEl = document.createElement("div");
+        this.colorResolverEl.style.display = "none";
+        document.body.appendChild(this.colorResolverEl);
+      }
+      this.colorResolverEl.style.color = `var(${varName})`;
+      const computed = getComputedStyle(this.colorResolverEl).color;
+
+      if (!this.colorCanvasCtx) {
+        const canvas = document.createElement("canvas");
+        canvas.width = 1;
+        canvas.height = 1;
+        this.colorCanvasCtx = canvas.getContext("2d", { willReadFrequently: true });
+      }
+
+      if (this.colorCanvasCtx && computed) {
+        this.colorCanvasCtx.fillStyle = computed;
+        this.colorCanvasCtx.fillRect(0, 0, 1, 1);
+        const [r, g, b] = this.colorCanvasCtx.getImageData(0, 0, 1, 1).data;
+        const finalColor = `rgb(${r}, ${g}, ${b})`;
+        this.colorCache.set(variable, finalColor);
+        return finalColor;
+      }
+
+      if (computed && (computed.startsWith("#") || computed.startsWith("rgb"))) {
         this.colorCache.set(variable, computed);
         return computed;
       }
-      this.colorCache.set(variable, fallback);
-      return fallback;
     } catch (e) {
       console.error(`3D Graph: Could not parse CSS color variable ${variable}`, e);
-      this.colorCache.set(variable, fallback);
-      return fallback;
     }
+
+    this.colorCache.set(variable, fallback);
+    return fallback;
   }
 
   public setGroupsDirty() {
@@ -1860,6 +1885,11 @@ export class Graph3DView extends ItemView {
       this.counterEl.remove();
     }
     this.clearResourceCaches();
+    if (this.colorResolverEl) {
+      this.colorResolverEl.remove();
+      this.colorResolverEl = null;
+    }
+    this.colorCanvasCtx = null;
     this.colorCache.clear();
     this.processedNodes.clear();
     this.nodeMap.clear();

@@ -141,6 +141,25 @@ export class InstancedLabelRenderer {
     const textColor = isDarkMode ? settings.labelTextColorDark : settings.labelTextColorLight;
     const bgColor = this.hexToRgba(settings.labelBackgroundColor, settings.labelBackgroundOpacity);
 
+    // Count unique labels to choose optimal texture size
+    const uniqueTexts = new Set<string>();
+    for (let i = 0; i < this.labelCount; i++) {
+      uniqueTexts.add(this.labels[i].name);
+    }
+    const uniqueCount = uniqueTexts.size;
+
+    // Dynamically choose atlas size: 2048 for <1200 unique labels, 4096 for larger graphs
+    if (uniqueCount > 1200) {
+      this.atlasWidth = 4096;
+      this.atlasHeight = 4096;
+    } else {
+      this.atlasWidth = 2048;
+      this.atlasHeight = 2048;
+    }
+
+    this.atlasCanvas.width = this.atlasWidth;
+    this.atlasCanvas.height = this.atlasHeight;
+
     // Reset atlas canvas
     this.atlasCtx.clearRect(0, 0, this.atlasWidth, this.atlasHeight);
     this.atlasCursorX = 2;
@@ -148,18 +167,42 @@ export class InstancedLabelRenderer {
     this.atlasRowHeight = 0;
     this.labelCache.clear();
 
-    const fontSize = 28; // High resolution font for atlas crispness
-    this.atlasCtx.font = `600 ${fontSize}px sans-serif`;
+    const fontSize = 20; // Crisp high-DPI font size with optimal atlas packing density
+    this.atlasCtx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif`;
     this.atlasCtx.textBaseline = "middle";
 
-    const paddingX = 14;
-    const paddingY = 8;
-    const borderRadius = 8;
+    const paddingX = 8;
+    const paddingY = 4;
+    const borderRadius = 6;
+
+    // Create a fallback slot at (2, 2)
+    const fallbackBoxW = 40;
+    const fallbackBoxH = fontSize + paddingY * 2;
+    this.atlasCtx.fillStyle = bgColor;
+    this.drawRoundedRect(this.atlasCtx, 2, 2, fallbackBoxW, fallbackBoxH, borderRadius);
+    this.atlasCtx.fill();
+    this.atlasCursorX += fallbackBoxW + 2;
+    this.atlasRowHeight = fallbackBoxH;
+
+    const fallbackGlyph: AtlasGlyph = {
+      u: 2 / this.atlasWidth,
+      v: 2 / this.atlasHeight,
+      w: fallbackBoxW / this.atlasWidth,
+      h: fallbackBoxH / this.atlasHeight,
+      pixelWidth: fallbackBoxW,
+      pixelHeight: fallbackBoxH,
+      aspect: fallbackBoxW / fallbackBoxH,
+    };
+    this.labelCache.set("__FALLBACK__", fallbackGlyph);
 
     for (let i = 0; i < this.labelCount; i++) {
-      const text = this.labels[i].name;
-      const cacheKey = `${text}_${textColor}_${bgColor}`;
+      let text = this.labels[i].name;
+      // Truncate overly long labels to prevent wasting atlas texture space
+      if (text.length > 40) {
+        text = `${text.substring(0, 38)}…`;
+      }
 
+      const cacheKey = `${text}_${textColor}_${bgColor}`;
       if (this.labelCache.has(cacheKey)) continue;
 
       const metrics = this.atlasCtx.measureText(text);
@@ -175,7 +218,7 @@ export class InstancedLabelRenderer {
       }
 
       if (this.atlasCursorY + boxHeight + 2 > this.atlasHeight) {
-        console.warn("[3D Graph] Label atlas full, some labels will share slots");
+        // Atlas full - map remaining labels to fallback glyph
         break;
       }
 
@@ -262,9 +305,15 @@ export class InstancedLabelRenderer {
     const baseHeight = settings.labelTextSize * 2.2;
 
     for (let i = 0; i < this.labelCount; i++) {
-      const text = this.labels[i].name;
+      let text = this.labels[i].name;
+      if (text.length > 40) {
+        text = `${text.substring(0, 38)}…`;
+      }
       const cacheKey = `${text}_${textColor}_${bgColor}`;
-      const glyph = this.labelCache.get(cacheKey) || this.labelCache.values().next().value;
+      const glyph =
+        this.labelCache.get(cacheKey) ||
+        this.labelCache.get("__FALLBACK__") ||
+        this.labelCache.values().next().value;
 
       if (glyph) {
         uvData[i * 4] = glyph.u;
@@ -433,8 +482,21 @@ export class InstancedLabelRenderer {
     this.opacityAttr.needsUpdate = true;
   }
 
-  private hexToRgba(hex: string, alpha: number): string {
-    const cleanHex = hex.replace("#", "");
+  private hexToRgba(color: string, alpha: number): string {
+    if (!color) return `rgba(20, 20, 25, ${alpha})`;
+    if (color.startsWith("rgb")) {
+      const match = color.match(/\d+(\.\d+)?/g);
+      if (match && match.length >= 3) {
+        return `rgba(${match[0]}, ${match[1]}, ${match[2]}, ${alpha})`;
+      }
+    }
+    const cleanHex = color.replace("#", "");
+    if (cleanHex.length === 3) {
+      const r = parseInt(cleanHex[0] + cleanHex[0], 16) || 0;
+      const g = parseInt(cleanHex[1] + cleanHex[1], 16) || 0;
+      const b = parseInt(cleanHex[2] + cleanHex[2], 16) || 0;
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
     const r = parseInt(cleanHex.substring(0, 2), 16) || 0;
     const g = parseInt(cleanHex.substring(2, 4), 16) || 0;
     const b = parseInt(cleanHex.substring(4, 6), 16) || 0;
