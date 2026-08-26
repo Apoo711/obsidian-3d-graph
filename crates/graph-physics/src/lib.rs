@@ -78,4 +78,16 @@ impl GraphPhysicsWasm {
     pub fn positions_stride(&self) -> usize {
         4
     }
+
+    pub fn shortest_path_hops(&self, start_node: u32) -> Vec<i32> {
+        self.engine.shortest_path_hops(start_node)
+    }
+
+    pub fn connected_components(&self) -> Vec<u32> {
+        self.engine.connected_components()
+    }
+
+    pub fn node_degrees(&self) -> Vec<u32> {
+        self.engine.node_degrees()
+    }
 }

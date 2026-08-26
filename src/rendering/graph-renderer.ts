@@ -94,6 +94,7 @@ export class InstancedGraphRenderer {
 
   public positionsStride: 4 | 3 = 4;
   private defaultLinkColor: [number, number, number] = [0.4, 0.4, 0.4];
+  private nodeColors: string[] = [];
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -116,10 +117,12 @@ export class InstancedGraphRenderer {
 
     this.nodeScales = new Float32Array(this.nodeCount);
     this.nodeBucketMap = new Array(this.nodeCount);
+    this.nodeColors = new Array(this.nodeCount);
 
     // Group nodes by shape
     const groups = new Map<NodeShape, number[]>();
     for (let i = 0; i < this.nodeCount; i++) {
+      this.nodeColors[i] = nodes[i].color ?? "#4f46e5";
       const shape = nodes[i].shape || NodeShape.Sphere;
       let groupList = groups.get(shape);
       if (!groupList) {
@@ -316,6 +319,9 @@ export class InstancedGraphRenderer {
     const dirtyBuckets = new Set<ShapeBucket>();
 
     for (const [nodeIndex, hexColor] of colorMap) {
+      if (this.nodeColors[nodeIndex] === hexColor) continue;
+      this.nodeColors[nodeIndex] = hexColor;
+
       const map = this.nodeBucketMap[nodeIndex];
       if (!map) continue;
       const bucket = this.shapeBuckets.get(map.shape);
@@ -421,6 +427,7 @@ export class InstancedGraphRenderer {
     this.nodeCount = 0;
     this.nodeScales = new Float32Array(0);
     this.nodeBucketMap = [];
+    this.nodeColors = [];
     this.edges = [];
     this.edgeIndexBuffer = new Int32Array(0);
     this.linePositions = new Float32Array(0);

@@ -391,4 +391,96 @@ impl PhysicsEngine {
 
         true
     }
+
+    pub fn shortest_path_hops(&self, start: u32) -> Vec<i32> {
+        let n = self.positions.len();
+        let mut dists = vec![-1i32; n];
+        if (start as usize) >= n {
+            return dists;
+        }
+
+        let mut adj: Vec<Vec<u32>> = vec![Vec::new(); n];
+        let edge_count = self.edges.len() >> 1;
+        for e in 0..edge_count {
+            let u = self.edges[e * 2];
+            let v = self.edges[e * 2 + 1];
+            if (u as usize) < n && (v as usize) < n && u != v {
+                adj[u as usize].push(v);
+                adj[v as usize].push(u);
+            }
+        }
+
+        let mut queue = std::collections::VecDeque::new();
+        dists[start as usize] = 0;
+        queue.push_back(start);
+
+        while let Some(u) = queue.pop_front() {
+            let d = dists[u as usize];
+            for &v in &adj[u as usize] {
+                if dists[v as usize] == -1 {
+                    dists[v as usize] = d + 1;
+                    queue.push_back(v);
+                }
+            }
+        }
+
+        dists
+    }
+
+    pub fn connected_components(&self) -> Vec<u32> {
+        let n = self.positions.len();
+        let mut comp = vec![u32::MAX; n];
+        if n == 0 {
+            return comp;
+        }
+
+        let mut adj: Vec<Vec<u32>> = vec![Vec::new(); n];
+        let edge_count = self.edges.len() >> 1;
+        for e in 0..edge_count {
+            let u = self.edges[e * 2];
+            let v = self.edges[e * 2 + 1];
+            if (u as usize) < n && (v as usize) < n && u != v {
+                adj[u as usize].push(v);
+                adj[v as usize].push(u);
+            }
+        }
+
+        let mut current_comp = 0u32;
+        let mut queue = std::collections::VecDeque::new();
+
+        for i in 0..n {
+            if comp[i] != u32::MAX {
+                continue;
+            }
+            comp[i] = current_comp;
+            queue.push_back(i as u32);
+
+            while let Some(u) = queue.pop_front() {
+                for &v in &adj[u as usize] {
+                    if comp[v as usize] == u32::MAX {
+                        comp[v as usize] = current_comp;
+                        queue.push_back(v);
+                    }
+                }
+            }
+            current_comp += 1;
+        }
+
+        comp
+    }
+
+    pub fn node_degrees(&self) -> Vec<u32> {
+        let n = self.positions.len();
+        let mut degs = vec![0u32; n];
+        let edge_count = self.edges.len() >> 1;
+        for e in 0..edge_count {
+            let u = self.edges[e * 2] as usize;
+            let v = self.edges[e * 2 + 1] as usize;
+            if u < n && v < n && u != v {
+                degs[u] += 1;
+                degs[v] += 1;
+            }
+        }
+        degs
+    }
 }
