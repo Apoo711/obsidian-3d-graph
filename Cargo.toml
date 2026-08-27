@@ -1,2 +1,14 @@
 [workspace]
+resolver = "3"
 members = ["crates/graph-physics"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+# Disable debug assertions and overflow checks in hot paths.
+debug-assertions = false
+overflow-checks = false
+
