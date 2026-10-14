@@ -260,6 +260,7 @@ export class InstancedLabelRenderer {
       this.atlasTexture.dispose();
     }
     this.atlasTexture = new THREE.CanvasTexture(this.atlasCanvas);
+    this.atlasTexture.flipY = false;
     this.atlasTexture.minFilter = THREE.LinearFilter;
     this.atlasTexture.magFilter = THREE.LinearFilter;
     this.atlasTexture.generateMipmaps = false;
