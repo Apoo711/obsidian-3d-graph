@@ -303,8 +303,7 @@ impl SpatialHashGrid3D {
 
         self.cell_heads.fill(EMPTY);
 
-        for i in 0..n {
-            let p = positions[i];
+        for (i, &p) in positions.iter().enumerate() {
             let cx = (p.x * self.inv_cell_size).floor() as i32;
             let cy = (p.y * self.inv_cell_size).floor() as i32;
             let cz = (p.z * self.inv_cell_size).floor() as i32;
