@@ -970,6 +970,16 @@ export class Graph3DView extends ItemView {
         });
       }
 
+      const prevPositions = new Map<string, [number, number, number]>();
+      if (useCache) {
+        const stride = this.physicsBridge.positionsStride;
+        const pos = this.currentPositions;
+        this.currentNodes.forEach((n, i) => {
+          const o = i * stride;
+          if (o + 2 < pos.length) prevPositions.set(n.id, [pos[o], pos[o + 1], pos[o + 2]]);
+        });
+      }
+
       const newData = await this.processVaultData();
       const hasNodes = newData && newData.nodes.length > 0;
 
@@ -1122,6 +1132,43 @@ export class Graph3DView extends ItemView {
           this.updateDisplay();
           this.updateControls();
 
+          // Seed the physics with the previous layout so an update does not
+          // re-explode the graph. New nodes start at the centroid of their
+          // already-placed neighbors.
+          let initialPositions: Float32Array | undefined;
+          if (prevPositions.size > 0) {
+            const stride = this.physicsBridge.positionsStride;
+            const neighbors = new Map<string, string[]>();
+            for (const l of newData.links) {
+              const s = typeof l.source === "object" ? (l.source as GraphNode).id : (l.source as string);
+              const t = typeof l.target === "object" ? (l.target as GraphNode).id : (l.target as string);
+              (neighbors.get(s) ?? neighbors.set(s, []).get(s)!).push(t);
+              (neighbors.get(t) ?? neighbors.set(t, []).get(t)!).push(s);
+            }
+            initialPositions = new Float32Array(newData.nodes.length * stride);
+            newData.nodes.forEach((n: GraphNode, i: number) => {
+              let p = prevPositions.get(n.id);
+              if (!p) {
+                const sum = [0, 0, 0];
+                let found = 0;
+                for (const nb of neighbors.get(n.id) ?? []) {
+                  const np = prevPositions.get(nb);
+                  if (np) {
+                    sum[0] += np[0];
+                    sum[1] += np[1];
+                    sum[2] += np[2];
+                    found++;
+                  }
+                }
+                p = found > 0
+                  // Jitter: nodes seeded at the same point get identical forces and never separate.
+                  ? [sum[0] / found + Math.random() - 0.5, sum[1] / found + Math.random() - 0.5, sum[2] / found + Math.random() - 0.5]
+                  : [(Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100];
+              }
+              initialPositions!.set(p, i * stride);
+            });
+          }
+
           this.physicsBridge
             .init(
               getWasmArrayBuffer(),
@@ -1133,6 +1180,7 @@ export class Graph3DView extends ItemView {
                 repulsion: this.settings.repelForce * 40.0,
                 attraction: this.settings.linkForce,
               },
+              initialPositions,
             )
             .then(() => {
               this.physicsBridge.onTick((positions) => {
