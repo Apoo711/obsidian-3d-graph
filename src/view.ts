@@ -730,20 +730,14 @@ export class Graph3DView extends ItemView {
     }
   }
 
-  private syncDragPositionsToWasm(node?: GraphNode) {
+  private syncDragPositionsToWasm() {
     if (!this.settings.useWasmPhysics || this.currentPositions.length === 0) return;
     if (this.dragSyncBuffer.length !== this.currentPositions.length) {
       this.dragSyncBuffer = new Float32Array(this.currentPositions.length);
     }
+    // currentPositions already holds the dragged node's live position. Overwriting it
+    // with node.x/y/z (stale seed values) teleported the node on every plain click.
     this.dragSyncBuffer.set(this.currentPositions);
-    if (node) {
-      const idx = this.nodeIdToIndex.get(node.id);
-      if (idx !== undefined) {
-        this.dragSyncBuffer[idx * 4] = node.x || 0;
-        this.dragSyncBuffer[idx * 4 + 1] = node.y || 0;
-        this.dragSyncBuffer[idx * 4 + 2] = node.z || 0;
-      }
-    }
     this.physicsBridge.setPositions(this.dragSyncBuffer);
   }
 
@@ -813,7 +807,7 @@ export class Graph3DView extends ItemView {
             this.currentPositions[idx * 4 + 2] = planeIntersect.z;
           }
           this.instancedRenderer.updatePositions(this.currentPositions);
-          this.syncDragPositionsToWasm(draggedNode);
+          this.syncDragPositionsToWasm();
         }
       } else {
         const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
@@ -826,7 +820,7 @@ export class Graph3DView extends ItemView {
 
     const onPointerUp = () => {
       if (draggedNode) {
-        this.syncDragPositionsToWasm(draggedNode);
+        this.syncDragPositionsToWasm();
         draggedNode = null;
         const controls = this.graph?.controls();
         if (controls) controls.enabled = true;
