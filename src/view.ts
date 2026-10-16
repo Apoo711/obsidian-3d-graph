@@ -96,7 +96,7 @@ export class Graph3DView extends ItemView {
 
   private idleRotateFrame: number | null = null;
   private lastIdleRotateTime = 0;
-  private lastInteractionTime = 0;
+  private lastInteractionTime = -Infinity;
   private readonly IDLE_ROTATE_DELAY = 3000;
   private idleRotateOffset = new THREE.Vector3();
 
@@ -901,14 +901,13 @@ export class Graph3DView extends ItemView {
     const markInteraction = () => {
       this.lastInteractionTime = performance.now();
     };
+    // Zooming (wheel) keeps the rotation going; only orbit/pan input pauses it.
     this.registerDomEvent(this.graphContainer, "pointerdown", markInteraction);
-    this.registerDomEvent(this.graphContainer, "wheel", markInteraction);
     // A long drag must not count as idle.
     this.registerDomEvent(this.graphContainer, "pointermove", (e) => {
       if (e.buttons) markInteraction();
     });
     this.registerDomEvent(this.graphContainer, "keydown", markInteraction);
-    this.lastInteractionTime = performance.now();
     this.idleRotateFrame = requestAnimationFrame(this.idleRotateStep);
   }
 
