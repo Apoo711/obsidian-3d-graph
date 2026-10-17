@@ -514,6 +514,25 @@ export class Graph3DSettingsTab extends PluginSettingTab {
           this.triggerUpdate({ updateControls: true });
         }),
     );
+    new Setting(containerEl)
+      .setName("Auto-rotate when idle")
+      .setDesc("Slowly orbit the camera after a few seconds without interaction.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.idleRotate).onChange(async (value) => {
+          this.plugin.settings.idleRotate = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+    new Setting(containerEl).setName("Auto-rotate speed (deg/s)").addSlider((s) =>
+      s
+        .setLimits(1, 30, 1)
+        .setValue(this.plugin.settings.idleRotateSpeed)
+        .setDynamicTooltip()
+        .onChange(async (v) => {
+          this.plugin.settings.idleRotateSpeed = v;
+          await this.plugin.saveSettings();
+        }),
+    );
     new Setting(containerEl).setName("Pan speed").addSlider((s) =>
       s
         .setLimits(0.1, 5, 0.1)
