@@ -92,8 +92,13 @@ export class PhysicsBridge {
             cb(positions, msg.frameTimeMs);
           }
 
+          // One step per display frame: unpaced stepping ran ~16k steps/s,
+          // which made the settling layout visibly spin at startup.
           if (this.isRunning) {
-            this.step();
+            const worker = this.worker;
+            requestAnimationFrame(() => {
+              if (this.isRunning && this.worker === worker) this.step();
+            });
           }
         } else if (msg.type === "ERROR") {
           console.error("[Rust WASM Physics Error]:", msg.error);
