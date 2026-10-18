@@ -1145,6 +1145,19 @@ export class Graph3DView extends ItemView {
               (neighbors.get(s) ?? neighbors.set(s, []).get(s)!).push(t);
               (neighbors.get(t) ?? neighbors.set(t, []).get(t)!).push(s);
             }
+            // A new node seeded on top of its neighbor gets blasted away by the repulsion,
+            // so offset it by the median link length of the nodes that already have a position.
+            const linkLens: number[] = [];
+            for (const [id, nbs] of neighbors) {
+              const a = prevPositions.get(id);
+              if (!a) continue;
+              for (const nb of nbs) {
+                const b = prevPositions.get(nb);
+                if (b && id < nb) linkLens.push(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+              }
+            }
+            linkLens.sort((x, y) => x - y);
+            const seedOffset = linkLens[linkLens.length >> 1] ?? 10;
             initialPositions = new Float32Array(newData.nodes.length * stride);
             newData.nodes.forEach((n: GraphNode, i: number) => {
               let p = prevPositions.get(n.id);
@@ -1161,8 +1174,11 @@ export class Graph3DView extends ItemView {
                   }
                 }
                 p = found > 0
-                  // Jitter: nodes seeded at the same point get identical forces and never separate.
-                  ? [sum[0] / found + Math.random() - 0.5, sum[1] / found + Math.random() - 0.5, sum[2] / found + Math.random() - 0.5]
+                  ? (() => {
+                      const v = [Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5];
+                      const k = seedOffset / (Math.hypot(v[0], v[1], v[2]) || 1);
+                      return [sum[0] / found + v[0] * k, sum[1] / found + v[1] * k, sum[2] / found + v[2] * k];
+                    })()
                   : [(Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100];
               }
               initialPositions!.set(p, i * stride);
@@ -1201,7 +1217,10 @@ export class Graph3DView extends ItemView {
               // Settle the layout in one batch before animating, so the first
               // rendered frame is already calm. step_n stops early once
               // converged, so the cap only bounds work on huge graphs.
-              const warmupSteps = Math.min(20000, Math.max(30, Math.floor(2000000 / newData.nodes.length)));
+              // A seeded layout only needs a short settle: a full one lets a single new node
+              // reshuffle the whole graph.
+              const fullWarmup = Math.min(20000, Math.max(30, Math.floor(2000000 / newData.nodes.length)));
+              const warmupSteps = initialPositions ? Math.min(200, fullWarmup) : fullWarmup;
               let warmedUp = false;
               this.physicsBridge.onTick(() => {
                 if (warmedUp) return;
