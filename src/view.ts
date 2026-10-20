@@ -730,20 +730,14 @@ export class Graph3DView extends ItemView {
     }
   }
 
-  private syncDragPositionsToWasm(node?: GraphNode) {
+  private syncDragPositionsToWasm() {
     if (!this.settings.useWasmPhysics || this.currentPositions.length === 0) return;
     if (this.dragSyncBuffer.length !== this.currentPositions.length) {
       this.dragSyncBuffer = new Float32Array(this.currentPositions.length);
     }
+    // currentPositions already holds the dragged node's live position. Overwriting it
+    // with node.x/y/z (stale seed values) teleported the node on every plain click.
     this.dragSyncBuffer.set(this.currentPositions);
-    if (node) {
-      const idx = this.nodeIdToIndex.get(node.id);
-      if (idx !== undefined) {
-        this.dragSyncBuffer[idx * 4] = node.x || 0;
-        this.dragSyncBuffer[idx * 4 + 1] = node.y || 0;
-        this.dragSyncBuffer[idx * 4 + 2] = node.z || 0;
-      }
-    }
     this.physicsBridge.setPositions(this.dragSyncBuffer);
   }
 
@@ -813,7 +807,7 @@ export class Graph3DView extends ItemView {
             this.currentPositions[idx * 4 + 2] = planeIntersect.z;
           }
           this.instancedRenderer.updatePositions(this.currentPositions);
-          this.syncDragPositionsToWasm(draggedNode);
+          this.syncDragPositionsToWasm();
         }
       } else {
         const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
@@ -826,7 +820,7 @@ export class Graph3DView extends ItemView {
 
     const onPointerUp = () => {
       if (draggedNode) {
-        this.syncDragPositionsToWasm(draggedNode);
+        this.syncDragPositionsToWasm();
         draggedNode = null;
         const controls = this.graph?.controls();
         if (controls) controls.enabled = true;
@@ -973,6 +967,16 @@ export class Graph3DView extends ItemView {
               z: node.z,
             });
           }
+        });
+      }
+
+      const prevPositions = new Map<string, [number, number, number]>();
+      if (useCache) {
+        const stride = this.physicsBridge.positionsStride;
+        const pos = this.currentPositions;
+        this.currentNodes.forEach((n, i) => {
+          const o = i * stride;
+          if (o + 2 < pos.length) prevPositions.set(n.id, [pos[o], pos[o + 1], pos[o + 2]]);
         });
       }
 
@@ -1128,6 +1132,59 @@ export class Graph3DView extends ItemView {
           this.updateDisplay();
           this.updateControls();
 
+          // Seed the physics with the previous layout so an update does not
+          // re-explode the graph. New nodes start at the centroid of their
+          // already-placed neighbors.
+          let initialPositions: Float32Array | undefined;
+          if (prevPositions.size > 0) {
+            const stride = this.physicsBridge.positionsStride;
+            const neighbors = new Map<string, string[]>();
+            for (const l of newData.links) {
+              const s = typeof l.source === "object" ? (l.source as GraphNode).id : (l.source as string);
+              const t = typeof l.target === "object" ? (l.target as GraphNode).id : (l.target as string);
+              (neighbors.get(s) ?? neighbors.set(s, []).get(s)!).push(t);
+              (neighbors.get(t) ?? neighbors.set(t, []).get(t)!).push(s);
+            }
+            // A new node seeded on top of its neighbor gets blasted away by the repulsion,
+            // so offset it by the median link length of the nodes that already have a position.
+            const linkLens: number[] = [];
+            for (const [id, nbs] of neighbors) {
+              const a = prevPositions.get(id);
+              if (!a) continue;
+              for (const nb of nbs) {
+                const b = prevPositions.get(nb);
+                if (b && id < nb) linkLens.push(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+              }
+            }
+            linkLens.sort((x, y) => x - y);
+            const seedOffset = linkLens[linkLens.length >> 1] ?? 10;
+            initialPositions = new Float32Array(newData.nodes.length * stride);
+            newData.nodes.forEach((n: GraphNode, i: number) => {
+              let p = prevPositions.get(n.id);
+              if (!p) {
+                const sum = [0, 0, 0];
+                let found = 0;
+                for (const nb of neighbors.get(n.id) ?? []) {
+                  const np = prevPositions.get(nb);
+                  if (np) {
+                    sum[0] += np[0];
+                    sum[1] += np[1];
+                    sum[2] += np[2];
+                    found++;
+                  }
+                }
+                p = found > 0
+                  ? (() => {
+                      const v = [Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5];
+                      const k = seedOffset / (Math.hypot(v[0], v[1], v[2]) || 1);
+                      return [sum[0] / found + v[0] * k, sum[1] / found + v[1] * k, sum[2] / found + v[2] * k];
+                    })()
+                  : [(Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100];
+              }
+              initialPositions!.set(p, i * stride);
+            });
+          }
+
           this.physicsBridge
             .init(
               getWasmArrayBuffer(),
@@ -1139,6 +1196,7 @@ export class Graph3DView extends ItemView {
                 repulsion: this.settings.repelForce * 40.0,
                 attraction: this.settings.linkForce,
               },
+              initialPositions,
             )
             .then(() => {
               this.physicsBridge.onTick((positions) => {
@@ -1159,7 +1217,10 @@ export class Graph3DView extends ItemView {
               // Settle the layout in one batch before animating, so the first
               // rendered frame is already calm. step_n stops early once
               // converged, so the cap only bounds work on huge graphs.
-              const warmupSteps = Math.min(20000, Math.max(30, Math.floor(2000000 / newData.nodes.length)));
+              // A seeded layout only needs a short settle: a full one lets a single new node
+              // reshuffle the whole graph.
+              const fullWarmup = Math.min(20000, Math.max(30, Math.floor(2000000 / newData.nodes.length)));
+              const warmupSteps = initialPositions ? Math.min(200, fullWarmup) : fullWarmup;
               let warmedUp = false;
               this.physicsBridge.onTick(() => {
                 if (warmedUp) return;
