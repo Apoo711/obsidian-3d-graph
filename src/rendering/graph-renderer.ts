@@ -358,8 +358,8 @@ export class InstancedGraphRenderer {
     for (let e = 0; e < edgeCount; e++) {
       const isHigh = highlightedEdges.has(e);
       const r = isHigh ? hr : dr;
-      const g = isHigh ? hg : db;
-      const b = isHigh ? hb : dg;
+      const g = isHigh ? hg : dg;
+      const b = isHigh ? hb : db;
       const cBase = e * 6;
       lc[cBase] = r;
       lc[cBase + 1] = g;
